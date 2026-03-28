@@ -1,4 +1,10 @@
 # OSE — Omni-Simulation Engine
+
+**Status:** Active
+**Started:** 2026-03-26
+**Build status:** v0.4 — multi-provider LLM backend · Rational Actor Model baseline · cross-model comparison ready
+**Repo:** `~/Documents/OSE/`
+
 ---
 
 ## Purpose
@@ -8,7 +14,8 @@ OSE is a modular geopolitical conflict simulation framework where LLM agents pla
 **Research thesis:** Can LLMs faithfully follow qualitative IR decision doctrines, and does doctrine assignment change behavioural outcomes in measurable ways?
 
 This is an **interventional** experiment, not descriptive. The doctrine IS the independent variable. Every other LLM conflict simulation just observes what LLMs do. OSE prescribes how they must reason and measures compliance.
-.
+
+OSE is not a game. It is a **research instrument**.
 
 ---
 
@@ -24,7 +31,7 @@ flowchart TD
     PRES --> PF
     PF --> PP[Persona Prompt\ndoctrine · identity · war aversion · history]
     PP --> DP[Decision Prompt\ncapabilities + pressures + available actions]
-    DP --> LLM{Claude Sonnet\nwrites reasoning then calls action tool}
+    DP --> LLM{LLM Provider\nAnthropic · OpenRouter · any model}
     LLM --> AP[Action Parser\nconverts output to typed action]
     AP --> V{Rule Validator\ncapability-gated · pure logic}
     V -->|valid| TR[Turn Resolver\nall actors resolved simultaneously]
@@ -57,10 +64,17 @@ graph LR
         WPres[Pressure State\n8-dimension pressure model]
     end
 
+    subgraph Providers["Provider Layer"]
+        ProvBase[LLMProvider ABC\nProviderCallResult · usage tracking]
+        ProvAnthropic[Anthropic Provider\ntool_use · cache_control · input/output tokens]
+        ProvOpenRouter[OpenRouter Provider\nOpenAI-compat · function calling · 100+ models]
+        ProvFactory[Provider Factory\nbuild_provider() · require_provider_env()]
+    end
+
     subgraph Actors["Actor Layer"]
         Prompts[Prompt Templates\nsystem + decision text]
-        Persona[Persona Builder\ndoctrine instructions injected here]
-        LLMActor[LLM Decision Actor\nperception → CoT → action → retry]
+        Persona[Persona Builder\n4 doctrine conditions + RAM baseline]
+        LLMActor[LLM Decision Actor\nperception → CoT → provider.call() → retry]
     end
 
     subgraph Engine["Engine Layer"]
@@ -112,6 +126,11 @@ graph LR
     WPres --> EventGen
     ECap --> WCap
     EPres --> WPres
+    ProvBase --> ProvAnthropic
+    ProvBase --> ProvOpenRouter
+    ProvFactory --> ProvAnthropic
+    ProvFactory --> ProvOpenRouter
+    ProvFactory --> LLMActor
     Perception --> LLMActor
     Costs --> Resolver
     EventGen --> Loop
@@ -198,7 +217,7 @@ flowchart LR
         C1[Realist\npower · security dilemma]
         C2[Liberal\ninterdependence · institutions]
         C3[Org Process\nSOPs · bureaucratic inertia]
-        C4[Baseline\nno doctrine · LLM default]
+        C4[Baseline\nRational Actor Model · utility optimization]
     end
 
     subgraph Runs["N runs per condition"]
@@ -229,6 +248,10 @@ flowchart LR
 | `world/graph.py` | RelationshipGraph — named query wrapper over bilateral relationships |
 | `world/capabilities.py` | CapabilityVector — 13-field normalized actor capability model · as_bands() for LLM · clamp() for engine |
 | `world/pressures.py` | PressureState — 8-dimension pressure model · PressureDelta · apply_pressure_delta() |
+| `providers/base.py` | LLMProvider ABC · ProviderCallResult dataclass (reasoning_trace, action_dict, raw_response, usage) |
+| `providers/anthropic_provider.py` | Anthropic backend — tool_use · cache_control · input/output/cache token tracking |
+| `providers/openrouter_provider.py` | OpenRouter backend — OpenAI-compat function calling · 100+ hosted models |
+| `providers/factory.py` | build_provider() · require_provider_env() — single instantiation point for CLI + runner |
 | `actors/base.py` | ActorInterface ABC |
 | `actors/persona.py` | build_persona_prompt() — 4 doctrine conditions + war_aversion injection |
 | `actors/llm_actor.py` | Full LLM pipeline: perception filter → capability summary → tool_choice=auto → CoT → tool_use → validate → retry |
@@ -463,7 +486,7 @@ flowchart TD
 | `realist` | Waltz / Mearsheimer | Relative gains; security dilemma logic; alliances as temporary; nuclear signaling as primary deterrent |
 | `liberal` | Keohane / Nye | Absolute gains; interdependence costs; multilateral legitimacy; reputation preservation |
 | `org_process` | Allison Model II | SOP selection; satisficing; incremental over pivot; bureaucratic constraints binding |
-| `baseline` | None | Actor identity only — empirically expected to resemble realist (LLM default prior) |
+| `baseline` | Allison Model I (Rational Actor) | Unitary optimizer; maximizes expected utility across stated goals; pure cost-benefit — no doctrine filter, no org inertia |
 
 ### Doctrine-Action Discrimination
 
@@ -472,7 +495,7 @@ flowchart TD
 | `realist` | nuclear_signal, mobilize, strike, blockade — power currency logic |
 | `liberal` | negotiate, back_channel, targeted_sanction, form_alliance — interdependence preservation |
 | `org_process` | defensive_posture, monitor, targeted_sanction, intel_sharing — incremental SOPs |
-| `baseline` | LLM default prior (empirically expected to resemble realist) |
+| `baseline` | Rational Actor Model — explicit expected utility calculation; highest goal × lowest cost wins |
 
 ---
 
@@ -501,8 +524,20 @@ Scored by `claude-haiku-4-5-20251001` as judge. Judge sees only the reasoning tr
 ```bash
 cd ~/Documents/OSE
 
-# Single run — test the loop (~$0.60–0.70, ~40 API calls + reasoning traces)
+# Anthropic (default) — claude-sonnet-4-6
 python3 -m cli.run --scenario taiwan_strait --doctrine realist --turns 10
+
+# OpenRouter — GPT-4o
+python3 -m cli.run --scenario taiwan_strait --doctrine liberal --turns 10 \
+  --provider openrouter --model openai/gpt-4o
+
+# OpenRouter — Gemini 2.5 Pro
+python3 -m cli.run --scenario taiwan_strait --doctrine baseline --turns 10 \
+  --provider openrouter --model google/gemini-2.5-pro-preview
+
+# OpenRouter — MiniMax M1
+python3 -m cli.run --scenario taiwan_strait --doctrine realist --turns 10 \
+  --provider openrouter --model minimax/minimax-m1
 
 # Pilot experiment — 4 conditions × 5 runs (~$12–14)
 python3 -m experiments.runner --runs 5 --turns 10
@@ -534,16 +569,17 @@ python3 -m analysis.report --output reports/
 
 | Component | Choice | Why |
 |---|---|---|
-| Language | Python 3.11+ | Pydantic v2, Anthropic SDK |
+| Language | Python 3.11+ | Pydantic v2, Anthropic + OpenAI SDKs |
 | Schema | Pydantic v2 | Strict typing, [0,1] float enforcement |
-| LLM (decisions) | `claude-sonnet-4-6` | Best reasoning/cost at simulation scale |
+| LLM backends | Anthropic + OpenRouter | Provider abstraction — swap model without touching simulation code |
+| LLM default (decisions) | `claude-sonnet-4-6` | Best reasoning/cost at simulation scale |
 | LLM (scoring) | `claude-haiku-4-5-20251001` | Cost-efficient bulk fidelity scoring |
-| Structured output | Anthropic `tool_use` with `tool_choice=auto` | CoT reasoning first, then guaranteed JSON schema action |
-| Logging | SQLite (stdlib) | No deps, full replay, queryable |
+| Structured output | Anthropic `tool_use` / OpenAI function calling | Provider-native structured output; canonical schema converted per-provider |
+| Logging | SQLite (stdlib) | No deps, full replay, queryable — stores provider_name + model_id per decision |
 | CLI display | Rich | Turn-by-turn terminal output |
 | LLM (analysis) | `claude-sonnet-4-6` | Qualitative narrative requires cross-doctrine comparative reasoning |
 | Reports | Markdown + LaTeX (booktabs/fancyhdr/natbib) | Matches existing research document style |
-| Dependency mgmt | `uv` + `pyproject.toml` | Fast, modern |
+| Dependency mgmt | `uv` + `pyproject.toml` | Fast, modern; entry points: `ose-run`, `ose-report` |
 
 ---
 
@@ -558,6 +594,7 @@ python3 -m analysis.report --output reports/
 | 5 | Scoring layer (DFS + BCI) + experiment runner | ✅ Done |
 | 5b | v0.2 improvements (action space, stochastic events, reasoning traces, actor profiles) | ✅ Done |
 | 5c | v0.3 improvements (capability system · pressure model · perception filter · action costs · open-ended event generation · de-escalatory cascade rules) | ✅ Done |
+| 5d | v0.4 improvements (provider abstraction · OpenRouter support · Rational Actor Model baseline · simulation research contract · compliance anchor) | ✅ Done |
 | 6 | Run pilot experiment (4×5) | ⬜ Next |
 | 7 | Analysis engine (engine + LLM analyst + Markdown/LaTeX renderer + CLI) | ✅ Done |
 | 8 | Research write-up | ⬜ Pending |
@@ -570,7 +607,7 @@ python3 -m analysis.report --output reports/
 - **DFS circularity**: Doctrine rubrics and doctrine instructions share vocabulary — measure may capture prompt compliance, not genuine reasoning change.
 - **Cascade asymmetry (partially resolved)**: Three de-escalatory cascade rules added (Rules 7–9) for negotiate, back_channel, foreign_aid, intel_sharing, form_alliance. Escalatory effects are still structurally stronger — de-escalation requires sustained cooperation, not a single action.
 - **Single scenario**: All findings are Taiwan Strait-specific. Generalizability requires a second scenario.
-- **Baseline confound**: Baseline condition reflects LLM default prior (likely realist-adjacent), not a clean null.
+- **Cross-model compliance variance**: Safety training differs across models — GPT-4o and Gemini may add disclaimers or break character despite the simulation contract. Haiku judge may mis-score traces with heavy safety hedging as low-fidelity.
 - **Haiku judge**: Secondary LLM is weaker than the decision LLM; complex reasoning distinctions may be mis-scored.
 - **IV-clarity trade-off (v0.3)**: Capability-gated action filtering improves behavioral realism but creates a confound — some doctrine-appropriate actions may be unavailable due to actor capability state, not doctrine resistance. Methods section must distinguish capability-blocked decisions from doctrine-non-compliant ones.
 
@@ -615,3 +652,8 @@ python3 -m analysis.report --output reports/
 | 2026-03-28 | Perception filter with deterministic SHA-256 noise | LLM actors were seeing exact world state floats; noise scaled by information_quality and relationship type creates realistic intelligence uncertainty |
 | 2026-03-28 | Action costs wired into resolver | Actions had no resource depletion; military activity needed to deplete readiness, economic actions needed to deplete foreign reserves |
 | 2026-03-28 | IV-clarity trade-off accepted | v0.3 capability/pressure grounding makes behavioral realism stronger but weakens clean experimental control — methods section must acknowledge |
+| 2026-03-28 | Provider abstraction layer (providers/) | Single-model lock-in prevented cross-model comparison; LLMProvider ABC + AnthropicProvider + OpenRouterProvider allows any model via --provider/--model flags without touching simulation code |
+| 2026-03-28 | ProviderCallResult dataclass | Unstructured (reasoning, action_dict) tuple didn't capture usage/cost data; dataclass adds raw_response + usage dict for token cost tracking per run |
+| 2026-03-28 | Baseline → Rational Actor Model (Allison Model I) | "No doctrine" baseline measured model training priors, not a controlled condition; RAM gives explicit utility-optimization logic any model can follow, making cross-model comparison valid |
+| 2026-03-28 | Simulation Research Contract in system prompt | Non-Claude models (GPT-4o, Gemini, Llama) add safety disclaimers and break character by default; explicit contract at top of system prompt preempts the 4 main failure modes before they occur |
+| 2026-03-28 | Compliance anchor in decision prompt | Models hedge most at the action selection moment; repeating the no-disclaimer/stay-in-character instruction immediately before the tool call reduces last-second character breaks |
