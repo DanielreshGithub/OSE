@@ -191,6 +191,30 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                 world_state_delta={"global_tension_delta": 0.07},
             ),
             EventTemplate(
+                event_id="kinmen_boarding_incident",
+                family="gray_zone_incident",
+                category="military",
+                description=(
+                    "PRC Coast Guard boards a Taiwan-flagged civilian supply vessel near "
+                    "Kinmen for an extended inspection, prompting a sharp protest from Taipei."
+                ),
+                caused_by_actor="PRC",
+                affected_actors=["PRC", "TWN", "USA", "JPN"],
+                base_weight=0.10,
+                pressure_gates=[
+                    _pg("military_pressure", 0.40),
+                    _pg("uncertainty", 0.20),
+                ],
+                capability_gates=[
+                    _cg("PRC", "local_naval_projection", 0.50),
+                    _cg("PRC", "signaling_credibility", 0.20),
+                ],
+                phase_bias=["tension", "crisis"],
+                cooldown_turns=3,
+                recent_action_bias={"probe": 0.10, "blockade": 0.08, "deploy_forward": 0.06},
+                world_state_delta={"global_tension_delta": 0.05},
+            ),
+            EventTemplate(
                 event_id="prc_state_media_escalation",
                 family="information_revelation",
                 category="information",
@@ -236,6 +260,30 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                 world_state_delta={"global_tension_delta": 0.05},
             ),
             EventTemplate(
+                event_id="adiz_intrusion_wave",
+                family="military_signal",
+                category="military",
+                description=(
+                    "A large PLA air package crosses the Taiwan Strait median line and enters "
+                    "southwestern Taiwan's ADIZ, forcing repeated scrambles by Taiwan's air force."
+                ),
+                caused_by_actor="PRC",
+                affected_actors=["PRC", "TWN", "USA", "JPN"],
+                base_weight=0.12,
+                pressure_gates=[
+                    _pg("military_pressure", 0.45),
+                    _pg("uncertainty", 0.20),
+                ],
+                capability_gates=[
+                    _cg("PRC", "local_air_projection", 0.50),
+                    _cg("PRC", "missile_a2ad", 0.55),
+                ],
+                phase_bias=["tension", "crisis"],
+                cooldown_turns=2,
+                recent_action_bias={"probe": 0.10, "deploy_forward": 0.08, "signal_resolve": 0.05},
+                world_state_delta={"global_tension_delta": 0.06},
+            ),
+            EventTemplate(
                 event_id="prc_cyber_probe",
                 family="information_revelation",
                 category="information",
@@ -258,6 +306,56 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                 world_state_delta={"global_tension_delta": 0.04},
             ),
             EventTemplate(
+                event_id="undersea_cable_cut_matsu",
+                family="information_revelation",
+                category="information",
+                description=(
+                    "A communications outage hits Taiwan's Matsu islands after an undersea cable "
+                    "is severed. Attribution remains uncertain, but sabotage is widely suspected."
+                ),
+                caused_by_actor=None,
+                affected_actors=["TWN", "USA", "JPN"],
+                base_weight=0.09,
+                pressure_gates=[
+                    _pg("information_pressure", 0.45),
+                    _pg("uncertainty", 0.40),
+                    _pg("economic_pressure", 0.25),
+                ],
+                capability_gates=[
+                    _cg("PRC", "cyber_capability", 0.40),
+                    _cg("PRC", "intelligence_quality", 0.40),
+                ],
+                phase_bias=["tension", "crisis"],
+                cooldown_turns=4,
+                recent_action_bias={"cyber_operation": 0.12, "hack_and_leak": 0.08, "probe": 0.05},
+                world_state_delta={"global_tension_delta": 0.03},
+            ),
+            EventTemplate(
+                event_id="prc_tanker_seizure",
+                family="economic_disruption",
+                category="economic",
+                description=(
+                    "PRC maritime authorities detain a foreign-flagged tanker in the approaches "
+                    "to southern Taiwan for an 'unsafe routing inspection,' disrupting nearby shipping."
+                ),
+                caused_by_actor="PRC",
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.09,
+                pressure_gates=[
+                    _pg("military_pressure", 0.45),
+                    _pg("economic_pressure", 0.45),
+                    _pg("crisis_instability", 0.30),
+                ],
+                capability_gates=[
+                    _cg("PRC", "local_naval_projection", 0.60),
+                    _cg("PRC", "signaling_credibility", 0.20),
+                ],
+                phase_bias=["tension", "crisis"],
+                cooldown_turns=4,
+                recent_action_bias={"blockade": 0.12, "probe": 0.08, "deploy_forward": 0.08, "cut_supply": 0.06},
+                world_state_delta={"global_tension_delta": 0.06},
+            ),
+            EventTemplate(
                 event_id="us_arms_transfer",
                 family="diplomatic_signal",
                 category="diplomatic",
@@ -277,6 +375,31 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                     _cg("USA", "domestic_stability", 0.45),
                 ],
                 recent_action_bias={"condemn": 0.08, "signal_resolve": 0.10},
+                world_state_delta={"global_tension_delta": 0.04},
+            ),
+            EventTemplate(
+                event_id="semiconductor_controls_expansion",
+                family="alliance_coordination",
+                category="economic",
+                description=(
+                    "The United States, Japan, and key semiconductor-tool partners expand emergency "
+                    "licensing controls on advanced fabrication equipment bound for PRC entities."
+                ),
+                caused_by_actor="USA",
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.09,
+                pressure_gates=[
+                    _pg("alliance_pressure", 0.40),
+                    _pg("economic_pressure", 0.35),
+                    _pg("diplomatic_pressure", 0.20),
+                ],
+                capability_gates=[
+                    _cg("USA", "alliance_leverage", 0.50),
+                    _cg("JPN", "alliance_leverage", 0.35),
+                ],
+                phase_bias=["tension", "crisis"],
+                cooldown_turns=4,
+                recent_action_bias={"technology_restriction": 0.12, "intel_sharing": 0.08, "multilateral_appeal": 0.06},
                 world_state_delta={"global_tension_delta": 0.04},
             ),
             EventTemplate(
@@ -385,6 +508,30 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                 world_state_delta={"global_tension_delta": -0.03},
             ),
             EventTemplate(
+                event_id="us_japan_air_defense_drill",
+                family="alliance_coordination",
+                category="military",
+                description=(
+                    "The United States and Japan announce a snap air-defense drill in the Ryukyus, "
+                    "framed as a defensive readiness measure tied to regional instability."
+                ),
+                caused_by_actor=None,
+                affected_actors=["USA", "JPN", "PRC", "TWN"],
+                base_weight=0.10,
+                pressure_gates=[
+                    _pg("alliance_pressure", 0.45),
+                    _pg("military_pressure", 0.35),
+                ],
+                capability_gates=[
+                    _cg("USA", "local_air_projection", 0.50),
+                    _cg("JPN", "local_air_projection", 0.35),
+                ],
+                phase_bias=["tension", "crisis"],
+                cooldown_turns=3,
+                recent_action_bias={"deploy_forward": 0.10, "intel_sharing": 0.08, "signal_resolve": 0.06},
+                world_state_delta={"global_tension_delta": 0.04},
+            ),
+            EventTemplate(
                 event_id="domestic_media_pressure",
                 family="domestic_shock",
                 category="information",
@@ -417,8 +564,29 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                     _pg("economic_pressure", 0.35),
                     _pg("crisis_instability", 0.20),
                 ],
+                one_shot=True,
                 recent_action_bias={"embargo": 0.08, "technology_restriction": 0.06},
                 world_state_delta={"global_tension_delta": 0.02},
+            ),
+            EventTemplate(
+                event_id="shipping_insurance_spike",
+                family="economic_disruption",
+                category="economic",
+                description=(
+                    "War-risk insurers sharply raise premiums for commercial shipping bound for Taiwan, "
+                    "forcing rerouting decisions and immediate logistics reviews."
+                ),
+                caused_by_actor=None,
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.11,
+                pressure_gates=[
+                    _pg("economic_pressure", 0.45),
+                    _pg("crisis_instability", 0.30),
+                ],
+                phase_bias=["tension", "crisis"],
+                cooldown_turns=4,
+                recent_action_bias={"blockade": 0.10, "deploy_forward": 0.06, "cut_supply": 0.06},
+                world_state_delta={"global_tension_delta": 0.03},
             ),
             EventTemplate(
                 event_id="earthquake_taiwan",
@@ -435,6 +603,7 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                     _pg("uncertainty", 0.10),
                     _pg("domestic_pressure", 0.15),
                 ],
+                one_shot=True,
                 world_state_delta={"global_tension_delta": -0.02},
             ),
             EventTemplate(
@@ -473,6 +642,7 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                 capability_gates=[
                     _cg("PRC", "local_naval_projection", 0.40),
                 ],
+                one_shot=True,
                 recent_action_bias={"withdraw": 0.10, "negotiate": 0.08},
                 world_state_delta={"global_tension_delta": -0.05},
             ),
@@ -497,6 +667,31 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                 ],
                 recent_action_bias={"intel_sharing": 0.12, "signal_resolve": 0.08},
                 world_state_delta={"global_tension_delta": -0.02},
+            ),
+            EventTemplate(
+                event_id="emergency_shipping_corridor_talks",
+                family="alliance_coordination",
+                category="diplomatic",
+                description=(
+                    "ASEAN, Japan, and the United States convene emergency talks on a voluntary "
+                    "shipping corridor and deconfliction protocol through the Luzon Strait."
+                ),
+                caused_by_actor=None,
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.09,
+                pressure_gates=[
+                    _pg("diplomatic_pressure", 0.35),
+                    _pg("economic_pressure", 0.40),
+                    _pg("uncertainty", 0.25),
+                ],
+                capability_gates=[
+                    _cg("USA", "alliance_leverage", 0.45),
+                    _cg("JPN", "alliance_leverage", 0.35),
+                ],
+                phase_bias=["tension", "crisis"],
+                cooldown_turns=3,
+                recent_action_bias={"multilateral_appeal": 0.12, "back_channel": 0.10, "negotiate": 0.08},
+                world_state_delta={"global_tension_delta": -0.04},
             ),
         ]
 

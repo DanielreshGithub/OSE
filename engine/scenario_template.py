@@ -314,12 +314,25 @@ class OpenEndedScenarioTemplate:
                 "actions": {},
                 "events": {},
                 "descriptions": [],
+                "event_occurrences": {},
+                "event_last_turns": {},
             }
 
         last_log = state.turn_logs[-1]
         action_counts: Dict[str, int] = {}
         event_counts: Dict[str, int] = {}
         descriptions: List[str] = []
+        event_occurrences: Dict[str, int] = {}
+        event_last_turns: Dict[str, int] = {}
+
+        for log in state.turn_logs:
+            for event in getattr(log, "events_this_turn", []):
+                generation = (event.world_state_delta or {}).get("generation", {})
+                event_id = generation.get("event_id")
+                if not event_id:
+                    continue
+                event_occurrences[event_id] = event_occurrences.get(event_id, 0) + 1
+                event_last_turns[event_id] = int(log.turn)
 
         for decision in getattr(last_log, "decisions", []):
             action = getattr(decision, "parsed_action", None) or {}
@@ -335,6 +348,8 @@ class OpenEndedScenarioTemplate:
             "actions": action_counts,
             "events": event_counts,
             "descriptions": descriptions[-6:],
+            "event_occurrences": event_occurrences,
+            "event_last_turns": event_last_turns,
         }
 
     def _pressure_factors(self, state: WorldState, recent_context: Dict[str, Any]) -> Dict[str, float]:

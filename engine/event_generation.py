@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 from engine.scenario_template import CapabilityVector, ScenarioPressureState
 from world.events import GlobalEvent
 from world.state import WorldState
+
+
 class PressureGate(BaseModel):
     pressure: str
     min_value: float = 0.0
@@ -47,6 +49,8 @@ class EventTemplate(BaseModel):
     recent_action_bias: Dict[str, float] = Field(default_factory=dict)
     min_turn: Optional[int] = None
     max_turn: Optional[int] = None
+    one_shot: bool = False
+    cooldown_turns: int = 0
     world_state_delta: Dict[str, Any] = Field(default_factory=dict)
     tags: List[str] = Field(default_factory=list)
 
@@ -147,6 +151,28 @@ class EventEligibilityEvaluator:
                 template=template,
                 eligible=False,
                 reasons=[f"turn>{template.max_turn}"],
+            )
+
+        event_occurrences = recent_context.get("event_occurrences", {})
+        event_last_turns = recent_context.get("event_last_turns", {})
+        if template.one_shot and int(event_occurrences.get(template.event_id, 0)) > 0:
+            return EventCandidate(
+                template=template,
+                eligible=False,
+                reasons=[f"one_shot_already_triggered:{template.event_id}"],
+            )
+        last_turn = event_last_turns.get(template.event_id)
+        if (
+            template.cooldown_turns > 0
+            and last_turn is not None
+            and (turn - int(last_turn)) <= template.cooldown_turns
+        ):
+            return EventCandidate(
+                template=template,
+                eligible=False,
+                reasons=[
+                    f"cooldown_active:{template.event_id} last_turn={last_turn} cooldown={template.cooldown_turns}"
+                ],
             )
 
         base_weight = max(template.base_weight, 0.0)
