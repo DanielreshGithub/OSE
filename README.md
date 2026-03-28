@@ -1,12 +1,5 @@
 # OSE — Omni-Simulation Engine
 
-**Status:** #active
-**Started:** 2026-03-26
-**Build status:** v0.3 — analysis engine complete, ready for pilot experiment
-**Repo:** `~/Documents/OSE/`
-
----
-
 ## Purpose
 
 OSE is a modular geopolitical conflict simulation framework where LLM agents play real-world state actors and make decisions that update a shared world state over multiple turns.
@@ -517,9 +510,3 @@ python3 -m analysis.report --runs logs/runs/ --llm --latex --output reports/
 | 2026-03-27 | Inflection-point sampling for LLM analysis | Feeding all traces would blow context; instead sample max 6/run: first active action per actor, phase transitions, contamination flags — high signal density |
 
 ---
-
-## Links
-
-- Related: [[project_sim_engine]] [[project_argus]]
-- Research doc: `~/Documents/OSE/research/ose_research_document.pdf`
-- Repo: `~/Documents/OSE/`
