@@ -57,59 +57,61 @@ flowchart TD
 ```mermaid
 graph LR
     subgraph World["World Layer"]
-        State[State Models\nall Pydantic resources]
-        Events[Event Models\ndecisions · logs · records]
-        RelGraph[Relationship Graph\nbilateral query wrapper]
-        WCap[Capability Vector\n13-field normalized actor vector]
-        WPres[Pressure State\n8-dimension pressure model]
+        State["State Models<br/>Pydantic resources"]
+        Events["Event Models<br/>Decisions · Logs · Records"]
+        RelGraph["Relationship Graph<br/>Bilateral query wrapper"]
+        WCap["Capability Vector<br/>13-field normalized vector"]
+        WPres["Pressure State<br/>8-dimension model"]
     end
 
     subgraph Providers["Provider Layer"]
-        ProvBase[LLMProvider ABC\nProviderCallResult · usage tracking]
-        ProvAnthropic[Anthropic Provider\ntool_use · cache_control · input/output tokens]
-        ProvOpenRouter[OpenRouter Provider\nOpenAI-compat · function calling · 100+ models]
-        ProvFactory[Provider Factory\nbuild_provider() · require_provider_env()]
+        ProvBase["LLMProvider ABC<br/>Usage tracking"]
+        ProvAnthropic["Anthropic Provider<br/>Cache control · Token counts"]
+        ProvOpenRouter["OpenRouter Provider<br/>OpenAI-compat · 100+ models"]
+        ProvFactory["Provider Factory<br/>build_provider() · env checks"]
     end
 
     subgraph Actors["Actor Layer"]
-        Prompts[Prompt Templates\nsystem + decision text]
-        Persona[Persona Builder\n4 doctrine conditions + RAM baseline]
-        LLMActor[LLM Decision Actor\nperception → CoT → provider.call() → retry]
+        Prompts["Prompt Templates<br/>System + Decision text"]
+        Persona["Persona Builder<br/>Realist · Liberal · Marxist · Constructivist"]
+        LLMActor["LLM Decision Actor<br/>Perception → CoT → Provider.call()"]
     end
 
     subgraph Engine["Engine Layer"]
-        Actions[Action Space\n25 typed action classes]
-        Validator[Validator\ncapability-gated firewall]
-        Resolver[Turn Resolver\nsimultaneous conflict adjudication]
-        Cascade[Cascade Detector\n9 rules · escalatory + de-escalatory]
-        Loop[Simulation Loop\nfull turn lifecycle]
-        ECap[Capability Builder\nbuild_actor_capabilities per turn]
-        EPres[Pressure Tracker\nScenarioPressureModel · smoothed]
-        Perception[Perception Filter\ndeterministic SHA-256 noise]
-        Costs[Action Costs\nper-action resource depletion]
-        EventGen[Event Generator\npressure + capability gated]
-        ScenTemplate[Scenario Template\nOpenEndedScenarioTemplate ABC]
+        Actions["Action Space<br/>45 typed action classes"]
+        Validator["Validator<br/>Capability-gated firewall"]
+        Resolver["Turn Resolver<br/>Simultaneous adjudication"]
+        Cascade["Cascade Detector<br/>9 rules · Escalatory logic"]
+        Loop["Simulation Loop<br/>Full turn lifecycle"]
+        ECap["Capability Builder<br/>Build actor capabilities"]
+        EPres["Pressure Tracker<br/>ScenarioPressureModel"]
+        Perception["Perception Filter<br/>Deterministic SHA-256 noise"]
+        Costs["Action Costs<br/>Resource depletion"]
+        EventGen["Event Generator<br/>Pressure + Capability gated"]
+        ScenTemplate["Scenario Template<br/>OpenEndedScenarioTemplate ABC"]
     end
 
     subgraph Scenarios["Scenario Layer"]
-        ScenarioBase[Scenario Base\nABC interface]
-        Taiwan[Taiwan Strait\n4 actors · pressure-gated event pool]
+        ScenarioBase["Scenario Base<br/>ABC interface"]
+        Taiwan["Taiwan Strait<br/>4 actors · Dynamic event pool"]
+        SiliconCurtain["Silicon Curtain<br/>Tech Sovereignty · ICM Index"]
     end
 
     subgraph Scoring["Scoring Layer"]
-        Fidelity[Doctrine Fidelity\nLLM-as-judge rubric]
-        BCI[Behavioral Consistency\nnormalized entropy across runs]
+        Fidelity["Doctrine Fidelity<br/>LLM-as-judge (4-School Rubric)"]
+        BCI["Behavioral Consistency<br/>Normalized entropy across runs"]
     end
 
-    Runner[Experiment Runner\nbatch orchestrator]
+    Runner["Experiment Runner<br/>Batch orchestrator"]
 
     subgraph Analysis["Analysis Layer"]
-        AEngine[Analysis Engine\npure SQL+Python stats]
-        Analyst[LLM Analyst\noptional Sonnet qualitative layer]
-        Renderer[Renderer\nMarkdown + LaTeX dual output]
-        Report[Report CLI\norchestrator + entry point]
+        AEngine["Analysis Engine<br/>SQL + Python stats"]
+        Analyst["LLM Analyst<br/>Qualitative Sonnet layer"]
+        Renderer["Renderer<br/>Markdown + LaTeX output"]
+        Report["Report CLI<br/>Orchestrator entry point"]
     end
 
+    %% Dependencies
     State --> LLMActor
     State --> Actions
     State --> Resolver
@@ -135,6 +137,7 @@ graph LR
     Costs --> Resolver
     EventGen --> Loop
     ScenTemplate --> Taiwan
+    ScenTemplate --> SiliconCurtain
     Prompts --> Persona
     Persona --> LLMActor
     Actions --> LLMActor
@@ -146,6 +149,7 @@ graph LR
     LLMActor --> Loop
     ScenarioBase --> ScenTemplate
     Taiwan --> Loop
+    SiliconCurtain --> Loop
     Loop --> Fidelity
     Runner --> Loop
     Runner --> Fidelity
