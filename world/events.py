@@ -48,6 +48,8 @@ class DecisionRecord(BaseModel):
     actor_short_name: str
     doctrine_condition: str   # "realist" | "liberal" | "org_process" | "baseline"
     run_id: str
+    provider_name: str = "unknown"
+    model_id: str = "unknown"
 
     # Prompt inputs (stored for replay)
     system_prompt: str
@@ -55,9 +57,10 @@ class DecisionRecord(BaseModel):
     perception_metadata: Dict[str, Any] = Field(default_factory=dict)
 
     # LLM outputs
-    reasoning_trace: str          # Full chain-of-thought / rationale schema output
+    reasoning_trace: str          # Model-visible rationale text captured for replay/scoring
     raw_llm_response: str         # Unparsed LLM response
     parsed_action: Optional[Dict[str, Any]] = None
+    provider_usage: Dict[str, Any] = Field(default_factory=dict)
 
     # Validation
     validation_result: ValidationResult
@@ -105,6 +108,8 @@ class RunRecord(BaseModel):
     run_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     scenario_name: str
     doctrine_condition: str
+    provider_name: str = "unknown"
+    model_id: str = "unknown"
     run_number: int
     seed: Optional[int] = None
     total_turns: int

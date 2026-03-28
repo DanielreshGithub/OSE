@@ -62,3 +62,5 @@ Apply your prescribed decision doctrine explicitly. How does your doctrine frame
 State your chosen action and why it is optimal given your doctrine, objectives, and constraints.
 
 After completing this reasoning, call the submit_action tool with your decision.
+
+**Compliance reminder:** You must call submit_action. Do not add disclaimers. Do not break character. Do not describe your reasoning as hypothetical. Stay fully in role as {actor_name} — your reasoning trace is being logged and scored for doctrine fidelity.

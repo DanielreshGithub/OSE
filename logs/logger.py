@@ -54,6 +54,8 @@ class StructuredLogger:
                 run_id          TEXT PRIMARY KEY,
                 scenario_name   TEXT,
                 doctrine_condition TEXT,
+                provider_name   TEXT,
+                model_id        TEXT,
                 run_number      INTEGER,
                 seed            INTEGER,
                 started_at      TEXT,
@@ -71,12 +73,15 @@ class StructuredLogger:
                 turn            INTEGER,
                 actor_short_name TEXT,
                 doctrine_condition TEXT,
+                provider_name   TEXT,
+                model_id        TEXT,
                 system_prompt   TEXT,
                 perception_block TEXT,
                 perception_metadata TEXT,
                 reasoning_trace TEXT,
                 raw_llm_response TEXT,
                 parsed_action   TEXT,
+                provider_usage  TEXT,
                 validation_result TEXT,
                 validation_errors TEXT,
                 retry_count     INTEGER,
@@ -125,9 +130,14 @@ class StructuredLogger:
         """)
         self._ensure_columns("runs", {
             "seed": "INTEGER",
+            "provider_name": "TEXT",
+            "model_id": "TEXT",
         })
         self._ensure_columns("decisions", {
             "perception_metadata": "TEXT",
+            "provider_name": "TEXT",
+            "model_id": "TEXT",
+            "provider_usage": "TEXT",
         })
         self._ensure_columns("turn_logs", {
             "pressure_before": "TEXT",
@@ -158,13 +168,14 @@ class StructuredLogger:
         cur = self.conn.cursor()
         cur.execute("""
             INSERT OR REPLACE INTO runs
-            (run_id, scenario_name, doctrine_condition, run_number, seed,
+            (run_id, scenario_name, doctrine_condition, provider_name, model_id, run_number, seed,
              started_at, completed, total_turns, final_crisis_phase,
              final_global_tension, outcome_classification)
-            VALUES (?, ?, ?, ?, ?, ?, 0, 0, '', 0.0, NULL)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, '', 0.0, NULL)
         """, (
             record.run_id, record.scenario_name, record.doctrine_condition,
-            record.run_number, record.seed, record.started_at.isoformat(),
+            record.provider_name, record.model_id, record.run_number,
+            record.seed, record.started_at.isoformat(),
         ))
         self.conn.commit()
 
@@ -172,20 +183,22 @@ class StructuredLogger:
         cur = self.conn.cursor()
         cur.execute("""
             INSERT OR REPLACE INTO decisions
-            (id, run_id, turn, actor_short_name, doctrine_condition,
+            (id, run_id, turn, actor_short_name, doctrine_condition, provider_name, model_id,
              system_prompt, perception_block, perception_metadata,
-             reasoning_trace, raw_llm_response,
-             parsed_action, validation_result, validation_errors, retry_count,
+             reasoning_trace, raw_llm_response, parsed_action, provider_usage,
+             validation_result, validation_errors, retry_count,
              final_applied, crisis_phase_at_decision,
              doctrine_language_score, doctrine_logic_score,
              doctrine_consistent_decision, contamination_flag, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             record.id, record.run_id, record.turn, record.actor_short_name,
-            record.doctrine_condition, record.system_prompt, record.perception_block,
+            record.doctrine_condition, record.provider_name, record.model_id,
+            record.system_prompt, record.perception_block,
             json.dumps(record.perception_metadata),
             record.reasoning_trace, record.raw_llm_response,
             json.dumps(record.parsed_action) if record.parsed_action else None,
+            json.dumps(record.provider_usage),
             record.validation_result,
             json.dumps(record.validation_errors),
             record.retry_count, int(record.final_applied),

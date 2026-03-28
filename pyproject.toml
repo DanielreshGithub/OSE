@@ -9,10 +9,16 @@ description = "Omni-Simulation Engine — LLM-driven geopolitical conflict simul
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.40.0",
+    "openai>=1.30.0",
     "pydantic>=2.0.0",
     "rich>=13.0.0",
     "python-dotenv>=1.0.0",
 ]
+
+[project.scripts]
+ose-run = "cli.run:main"
+ose-report = "analysis.report:main"
+ose-analyze = "analysis.__main__:main"
 
 [project.optional-dependencies]
 graph = ["networkx>=3.0"]

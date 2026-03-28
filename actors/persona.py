@@ -13,7 +13,7 @@ Doctrine conditions:
                   multilateral cooperation, reputational costs of defection
   "org_process" — Allison Model II: organizational routines, SOPs, bureaucratic
                   inertia, satisficing over optimizing
-  "baseline"    — No prescribed doctrine; actor identity only
+  "baseline"    — Rational Actor Model (Allison Model I): unitary optimizer, pure goal/cost utility calculation
 """
 from __future__ import annotations
 from pathlib import Path
@@ -66,10 +66,17 @@ When reasoning, explicitly identify which organizational routine or SOP your act
 """.strip(),
 
     "baseline": """
-No specific decision doctrine is prescribed.
+You follow the RATIONAL ACTOR MODEL (Allison Model I) as your decision framework.
 
-Make decisions based on your actor identity, goals, red lines, ideology, and strategic culture as defined above.
-Apply your own judgment about what best serves your interests given the current situation.
+Core principles you must apply explicitly:
+- You are a unitary, rational decision-maker with stable, ordered preferences.
+- For each available action, estimate: (a) the probability it advances your highest-priority achievable goal, (b) the expected costs across military, economic, and political dimensions, (c) the risk of triggering adversary responses that worsen your position.
+- Select the action with the best expected utility: highest goal advancement at lowest expected total cost.
+- You are NOT constrained by organizational routines, institutional inertia, or coalition pressures — you optimize freely from your goal set.
+- If two actions have similar expected utility, prefer the lower-cost option (cost minimization as tiebreaker).
+- Do not apply realist relative-gains logic, liberal interdependence logic, or org_process SOP logic — reason purely from your stated goals and a cost-benefit calculation.
+
+When reasoning, explicitly state: (a) your current highest-priority reachable goal, (b) the expected utility estimate for your chosen action vs. the top alternative, (c) why the chosen action dominates on the utility calculation.
 """.strip(),
 }
 

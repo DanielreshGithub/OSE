@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
+from providers.factory import VALID_PROVIDERS, build_provider, require_provider_env
 
 load_dotenv()
 
@@ -63,6 +64,8 @@ def run_single(
     log_dir: str,
     experiment_id: str,
     base_seed: int,
+    provider_name: str,
+    model: Optional[str],
 ) -> Optional[str]:
     """
     Execute one simulation run. Returns the db_path on success, None on failure.
@@ -77,6 +80,7 @@ def run_single(
     try:
         scenario = _load_scenario(scenario_name, seed=run_seed)
         state = scenario.initialize()
+        provider = build_provider(provider_name, model)
 
         # Build actors
         actors = {
@@ -84,6 +88,7 @@ def run_single(
                 actor=actor,
                 doctrine_condition=doctrine,
                 run_id=run_id,
+                provider=provider,
             )
             for name, actor in state.actors.items()
         }
@@ -96,6 +101,8 @@ def run_single(
             run_id=run_id,
             run_number=run_number,
             seed=run_seed,
+            provider_name=provider.provider_name,
+            model_id=provider.model_id,
             log_dir=log_dir,
             verbose=False,   # Quiet during batch runs
             scenario=scenario,
@@ -165,6 +172,11 @@ def main():
                         help="Seconds to wait between runs (rate limiting, default: 2)")
     parser.add_argument("--seed", type=int, default=0,
                         help="Deterministic base seed for per-run derived seeds (default: 0)")
+    parser.add_argument("--provider", default="anthropic",
+                        choices=VALID_PROVIDERS,
+                        help="Decision LLM provider to use (default: anthropic)")
+    parser.add_argument("--model", default=None,
+                        help="Decision model override for the selected provider.")
     parser.add_argument("--skip-scoring", action="store_true",
                         help="Skip DFS scoring after runs (run separately later)")
     parser.add_argument("--skip-bci", action="store_true",
@@ -172,12 +184,13 @@ def main():
 
     args = parser.parse_args()
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ERROR: ANTHROPIC_API_KEY not set.")
+    require_provider_env(args.provider)
+    if not args.skip_scoring and not os.environ.get("ANTHROPIC_API_KEY"):
+        print("ERROR: ANTHROPIC_API_KEY not set. DFS scoring still uses Anthropic.")
         sys.exit(1)
 
     experiment_id = args.experiment_id or (
-        f"exp_{args.scenario}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        f"exp_{args.scenario}_{args.provider}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
     )
     log_dir = str(Path(args.log_dir) / experiment_id)
     Path(log_dir).mkdir(parents=True, exist_ok=True)
@@ -186,6 +199,8 @@ def main():
     est_calls = total_runs * len(["USA", "PRC", "TWN", "JPN"]) * args.turns
     print(f"\nOSE Experiment: {experiment_id}")
     print(f"  Scenario:    {args.scenario}")
+    print(f"  Provider:    {args.provider}")
+    print(f"  Model:       {args.model or 'provider default'}")
     print(f"  Conditions:  {args.conditions}")
     print(f"  Runs/cond:   {args.runs}")
     print(f"  Turns/run:   {args.turns}")
@@ -214,6 +229,8 @@ def main():
                 log_dir=log_dir,
                 experiment_id=experiment_id,
                 base_seed=args.seed,
+                provider_name=args.provider,
+                model=args.model,
             )
             if db_path:
                 condition_db_map[condition].append(db_path)

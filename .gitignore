@@ -18,7 +18,3 @@ logs/runs/*.db
 
 # Reports / analysis output
 reports/
-analysis/
-
-# Tests
-tests/

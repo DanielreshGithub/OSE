@@ -71,6 +71,8 @@ class SimulationEngine:
         run_id: Optional[str] = None,
         run_number: int = 1,
         seed: int = 0,
+        provider_name: Optional[str] = None,
+        model_id: Optional[str] = None,
         log_dir: str = "logs/runs",
         verbose: bool = True,
         scenario: Optional[Any] = None,  # ScenarioDefinition — for dynamic per-turn events
@@ -81,6 +83,8 @@ class SimulationEngine:
         self.run_id = run_id or str(uuid.uuid4())[:8]
         self.run_number = run_number
         self.seed = int(seed)
+        self.provider_name = provider_name or "unknown"
+        self.model_id = model_id or "unknown"
         self.verbose = verbose
         self._scenario = scenario        # If provided, call get_turn_events(turn, state) live
 
@@ -119,6 +123,8 @@ class SimulationEngine:
             run_id=self.run_id,
             scenario_name=self.state.scenario_name,
             doctrine_condition=self.doctrine_condition,
+            provider_name=self.provider_name,
+            model_id=self.model_id,
             run_number=self.run_number,
             seed=self.seed,
             total_turns=max_turns,

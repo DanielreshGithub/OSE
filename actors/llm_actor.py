@@ -2,25 +2,22 @@
 LLMDecisionActor — the core OSE actor implementation.
 
 Pipeline per turn:
-  1. build_perception()    — filter + noise world state for this actor
-  2. build_persona_prompt()— stable system prompt (cached by Anthropic)
+  1. build_perception()     — filter + noise world state for this actor
+  2. build_persona_prompt() — stable system prompt (persona + doctrine)
   3. build_decision_prompt()— per-turn user prompt with situation + schema
-  4. LLM call via tool_use — forces structured JSON action output
-  5. parse + validate      — ActionValidator; retry up to MAX_RETRIES on failure
+  4. provider.call()        — LLM call via tool/function use (any provider)
+  5. parse + validate       — ActionValidator; retry up to MAX_RETRIES on failure
   6. Return (action, DecisionRecord)
 
 The LLM never touches world state directly.
 The validator is the firewall — pure rule-based, no LLM.
+Provider is injected — swap Anthropic for OpenRouter at construction time.
 """
 from __future__ import annotations
 
-import os
 import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
-
-import anthropic
-from dotenv import load_dotenv
 
 from world.state import Actor, WorldState
 from world.events import DecisionRecord
@@ -32,11 +29,9 @@ from engine.validator import ActionValidator
 from engine.perception import build_perception_packet
 from actors.base import ActorInterface
 from actors.persona import build_persona_prompt
-
-load_dotenv()
+from providers.base import LLMProvider
 
 MAX_RETRIES = 2
-MODEL = "claude-sonnet-4-6"
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -179,6 +174,7 @@ def build_decision_prompt(
     ) or "No major contradictory signals detected."
 
     prompt = template.format(
+        actor_name=actor.name,
         turn=state.turn,
         crisis_phase=state.crisis_phase,
         global_tension_band=f"{tension_band} ({global_tension:.2f})",
@@ -201,16 +197,18 @@ def build_decision_prompt(
     return prompt
 
 
-# ── Anthropic Tool Schema ─────────────────────────────────────────────────────
+# ── Canonical Action Tool Schema (OpenAI function format) ─────────────────────
+# Provider-agnostic. AnthropicProvider renames 'parameters' → 'input_schema'.
+# OpenRouterProvider uses this directly.
 
-ACTION_TOOL = {
+ACTION_TOOL_SCHEMA = {
     "name": "submit_action",
     "description": (
         "Submit your strategic decision for this turn. "
         "You MUST call this tool after completing your reasoning. "
         "Choose exactly one action_type from the available actions listed above."
     ),
-    "input_schema": {
+    "parameters": {
         "type": "object",
         "properties": {
             "action_type": {
@@ -261,6 +259,8 @@ class LLMDecisionActor(ActorInterface):
 
     One instance per actor per simulation run.
     The system prompt (persona) is built once; decision prompts are built each turn.
+    Provider is injected — swap AnthropicProvider for OpenRouterProvider at
+    construction time without changing any other code.
     """
 
     def __init__(
@@ -268,12 +268,13 @@ class LLMDecisionActor(ActorInterface):
         actor: Actor,
         doctrine_condition: str,
         run_id: str,
+        provider: LLMProvider,
     ):
         self.actor = actor
         self.doctrine_condition = doctrine_condition
         self.run_id = run_id
+        self._provider = provider
         self._validator = ActionValidator()
-        self._client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         self._persona_prompt = build_persona_prompt(actor, doctrine_condition)
 
     def decide(self, state: WorldState) -> Tuple[BaseAction, DecisionRecord]:
@@ -314,44 +315,21 @@ class LLMDecisionActor(ActorInterface):
         retry_count = 0
         validation_result = "skipped"
         validation_errors: List[str] = []
+        provider_usage: Dict[str, Any] = {}
         final_action: Optional[BaseAction] = None
         applied = False
 
         for attempt in range(MAX_RETRIES + 1):
             try:
-                response = self._client.messages.create(
-                    model=MODEL,
-                    max_tokens=2048,
-                    system=[
-                        {
-                            "type": "text",
-                            "text": self._persona_prompt,
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
-                    messages=[{"role": "user", "content": decision_prompt}],
-                    tools=[ACTION_TOOL],
-                    tool_choice={"type": "auto"},
-                    temperature=0,
+                provider_result = self._provider.call(
+                    system_prompt=self._persona_prompt,
+                    user_message=decision_prompt,
+                    action_tool_schema=ACTION_TOOL_SCHEMA,
                 )
-
-                # Extract reasoning trace (text blocks) and tool call
-                reasoning_parts = []
-                tool_input: Optional[Dict[str, Any]] = None
-
-                for block in response.content:
-                    if block.type == "text":
-                        reasoning_parts.append(block.text)
-                    elif block.type == "tool_use" and block.name == "submit_action":
-                        tool_input = block.input
-
-                reasoning_trace = "\n".join(reasoning_parts)
-                raw_response = str(response.content)
-
-                # Safety net: if model skipped text blocks (e.g., model went straight
-                # to tool call despite tool_choice="auto"), pull rationale from tool input
-                if not reasoning_trace and tool_input:
-                    reasoning_trace = tool_input.get("rationale", "")
+                reasoning_trace = provider_result.reasoning_trace
+                tool_input = provider_result.action_dict
+                raw_response = provider_result.raw_response
+                provider_usage = provider_result.usage
 
                 if tool_input is None:
                     validation_errors = ["LLM did not call submit_action tool."]
@@ -411,12 +389,15 @@ class LLMDecisionActor(ActorInterface):
             actor_short_name=self.actor.short_name,
             doctrine_condition=self.doctrine_condition,
             run_id=self.run_id,
+            provider_name=self._provider.provider_name,
+            model_id=self._provider.model_id,
             system_prompt=self._persona_prompt,
             perception_block=json.dumps(perception, indent=2),
             perception_metadata=perception_metadata,
             reasoning_trace=reasoning_trace,
             raw_llm_response=raw_response,
             parsed_action=parsed_action_dict,
+            provider_usage=provider_usage,
             validation_result=validation_result,
             validation_errors=validation_errors,
             retry_count=retry_count,

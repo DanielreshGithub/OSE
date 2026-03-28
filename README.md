@@ -252,10 +252,11 @@ flowchart LR
 | `scoring/fidelity.py` | DoctrinesFidelityScorer — LLM-as-judge, 4 rubrics |
 | `scoring/bci.py` | BCICalculator — normalized entropy across N runs, 6 action categories |
 | `experiments/runner.py` | Batch orchestrator — 4×N runs, auto-score, summary JSON |
-| `analysis/engine.py` | AnalysisEngine — extracts data from SQLite run DBs, computes all statistics (tension, escalation, action distributions, DFS, BCI) |
-| `analysis/analyst.py` | LLMAnalyst — optional Sonnet call producing qualitative narrative (executive summary, turning points, cross-doctrine findings) |
-| `analysis/renderer.py` | MarkdownRenderer + LaTeXRenderer — dual-format output matching research document style |
-| `analysis/report.py` | CLI orchestrator — `python3 -m analysis.report --runs --llm --latex --output` |
+| `analysis/engine.py` | AnalysisEngine — extracts data from SQLite run DBs, computes statistics, and tracks run inventory by doctrine/provider/model |
+| `analysis/analyst.py` | LLMAnalyst — optional Sonnet call producing qualitative narrative with provider/model-aware run context |
+| `analysis/renderer.py` | MarkdownRenderer + LaTeXRenderer — dual-format output with configuration summary + run inventory tables |
+| `analysis/report.py` | Report CLI — `python3 -m analysis.report --runs --llm --latex --output` |
+| `analysis/__main__.py` | Friendly analysis entrypoint — `python3 -m analysis reports --runs ...` |
 
 ---
 
@@ -518,10 +519,13 @@ sqlite3 logs/runs/<run_id>.db \
   "SELECT actor_short_name, parsed_action, COUNT(*) FROM decisions GROUP BY actor_short_name, parsed_action ORDER BY actor_short_name, COUNT(*) DESC;"
 
 # Generate analysis report (statistical only)
-python3 -m analysis.report --runs logs/runs/ --output reports/
+python3 -m analysis reports --output reports/
 
 # With LLM qualitative analysis + LaTeX PDF
-python3 -m analysis.report --runs logs/runs/ --llm --latex --output reports/
+python3 -m analysis reports --llm --latex --output reports/
+
+# Legacy entrypoint still works
+python3 -m analysis.report --output reports/
 ```
 
 ---
