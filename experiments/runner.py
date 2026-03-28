@@ -1,0 +1,317 @@
+"""
+Experiment Runner — orchestrates the full 4-condition × N-run experimental design.
+
+Runs the simulation N times per doctrine condition across all 4 conditions,
+then scores all decisions and computes BCI.
+
+Usage:
+    python -m experiments.runner --runs 5 --turns 10 --scenario taiwan_strait
+    python -m experiments.runner --runs 20 --turns 15 --conditions realist liberal
+
+Output:
+    logs/experiments/<experiment_id>/
+        <condition>_run_<n>.db       — per-run SQLite logs
+        experiment_summary.json      — aggregate statistics
+
+Full 80-run experiment (4 × 20): ~$130–165 at Sonnet rates.
+Reduced pilot (4 × 5): ~$30–40.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+VALID_DOCTRINES = ["realist", "liberal", "org_process", "baseline"]
+SCENARIO_REGISTRY = {
+    "taiwan_strait": "scenarios.taiwan_strait.TaiwanStraitScenario",
+}
+
+
+def _load_scenario(name: str):
+    if name not in SCENARIO_REGISTRY:
+        print(f"Unknown scenario: {name}")
+        sys.exit(1)
+    import importlib
+    module_path, class_name = SCENARIO_REGISTRY[name].rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name)()
+
+
+def run_single(
+    scenario_name: str,
+    doctrine: str,
+    run_number: int,
+    max_turns: int,
+    log_dir: str,
+    experiment_id: str,
+) -> Optional[str]:
+    """
+    Execute one simulation run. Returns the db_path on success, None on failure.
+    """
+    from actors.llm_actor import LLMDecisionActor
+    from engine.loop import SimulationEngine
+
+    run_id = f"{experiment_id}_{doctrine}_r{run_number:02d}"
+    print(f"\n  [{doctrine}] Run {run_number} — {run_id}")
+
+    try:
+        scenario = _load_scenario(scenario_name)
+        state = scenario.initialize()
+
+        # Build actors
+        actors = {
+            name: LLMDecisionActor(
+                actor=actor,
+                doctrine_condition=doctrine,
+                run_id=run_id,
+            )
+            for name, actor in state.actors.items()
+        }
+
+        # Pass scenario directly — events roll against live state each turn
+        engine = SimulationEngine(
+            state=state,
+            actors=actors,
+            doctrine_condition=doctrine,
+            run_id=run_id,
+            log_dir=log_dir,
+            verbose=False,   # Quiet during batch runs
+            scenario=scenario,
+        )
+
+        final_state, outcome = engine.run(max_turns=max_turns)
+
+        db_path = str(Path(log_dir) / f"{run_id}.db")
+        print(f"    ✓ {outcome} | tension={final_state.global_tension:.2f} "
+              f"| phase={final_state.crisis_phase} | log={run_id}.db")
+        return db_path
+
+    except Exception as e:
+        print(f"    ✗ Run failed: {e}")
+        return None
+
+
+def score_run(db_path: str) -> dict:
+    """Score all decisions in a run database."""
+    from scoring.fidelity import DoctrinesFidelityScorer
+    scorer = DoctrinesFidelityScorer()
+    return scorer.score_run_from_db(db_path)
+
+
+def compute_bci(condition_db_map: Dict[str, List[str]]) -> dict:
+    """Compute BCI across all conditions."""
+    from scoring.bci import BCICalculator
+    calc = BCICalculator()
+    return calc.compare_conditions(condition_db_map)
+
+
+def classify_outcomes(db_paths: List[str]) -> Dict[str, int]:
+    """Count outcome classifications across runs."""
+    import sqlite3
+    counts: Dict[str, int] = {}
+    for db_path in db_paths:
+        if not Path(db_path).exists():
+            continue
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("SELECT outcome_classification FROM runs")
+        for row in cur.fetchall():
+            outcome = row[0] or "unknown"
+            counts[outcome] = counts.get(outcome, 0) + 1
+        conn.close()
+    return counts
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="OSE Experiment Runner — 4-condition × N-run batch executor"
+    )
+    parser.add_argument("--scenario", default="taiwan_strait",
+                        choices=list(SCENARIO_REGISTRY.keys()))
+    parser.add_argument("--runs", type=int, default=5,
+                        help="Number of runs per doctrine condition (default: 5)")
+    parser.add_argument("--turns", type=int, default=10,
+                        help="Turns per run (default: 10)")
+    parser.add_argument("--conditions", nargs="+", default=VALID_DOCTRINES,
+                        choices=VALID_DOCTRINES,
+                        help="Doctrine conditions to run (default: all 4)")
+    parser.add_argument("--experiment-id", default=None,
+                        help="Experiment ID (default: auto-generated)")
+    parser.add_argument("--log-dir", default="logs/experiments",
+                        help="Root log directory (default: logs/experiments)")
+    parser.add_argument("--delay", type=float, default=2.0,
+                        help="Seconds to wait between runs (rate limiting, default: 2)")
+    parser.add_argument("--skip-scoring", action="store_true",
+                        help="Skip DFS scoring after runs (run separately later)")
+    parser.add_argument("--skip-bci", action="store_true",
+                        help="Skip BCI computation after runs")
+
+    args = parser.parse_args()
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("ERROR: ANTHROPIC_API_KEY not set.")
+        sys.exit(1)
+
+    experiment_id = args.experiment_id or (
+        f"exp_{args.scenario}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+    )
+    log_dir = str(Path(args.log_dir) / experiment_id)
+    Path(log_dir).mkdir(parents=True, exist_ok=True)
+
+    total_runs = len(args.conditions) * args.runs
+    est_calls = total_runs * len(["USA", "PRC", "TWN", "JPN"]) * args.turns
+    print(f"\nOSE Experiment: {experiment_id}")
+    print(f"  Scenario:    {args.scenario}")
+    print(f"  Conditions:  {args.conditions}")
+    print(f"  Runs/cond:   {args.runs}")
+    print(f"  Turns/run:   {args.turns}")
+    print(f"  Total runs:  {total_runs}")
+    print(f"  Est. LLM calls: ~{est_calls} (decision) + ~{est_calls} (scoring)")
+    print(f"  Log dir:     {log_dir}")
+    print()
+
+    # ── Execute runs ──────────────────────────────────────────────────────────
+    condition_db_map: Dict[str, List[str]] = {c: [] for c in args.conditions}
+    all_db_paths: List[str] = []
+    run_results = []
+
+    for condition in args.conditions:
+        print(f"\n{'='*60}")
+        print(f"CONDITION: {condition.upper()}")
+        print(f"{'='*60}")
+
+        for run_num in range(1, args.runs + 1):
+            db_path = run_single(
+                scenario_name=args.scenario,
+                doctrine=condition,
+                run_number=run_num,
+                max_turns=args.turns,
+                log_dir=log_dir,
+                experiment_id=experiment_id,
+            )
+            if db_path:
+                condition_db_map[condition].append(db_path)
+                all_db_paths.append(db_path)
+                run_results.append({
+                    "condition": condition,
+                    "run_number": run_num,
+                    "db_path": db_path,
+                    "success": True,
+                })
+            else:
+                run_results.append({
+                    "condition": condition,
+                    "run_number": run_num,
+                    "db_path": None,
+                    "success": False,
+                })
+
+            if run_num < args.runs or condition != args.conditions[-1]:
+                time.sleep(args.delay)
+
+    # ── Score decisions ───────────────────────────────────────────────────────
+    condition_dfs: Dict[str, dict] = {}
+    if not args.skip_scoring:
+        print(f"\n{'='*60}")
+        print("DOCTRINE FIDELITY SCORING")
+        print(f"{'='*60}")
+        for condition, db_paths in condition_db_map.items():
+            print(f"\nScoring condition: {condition}")
+            condition_scores = []
+            for db_path in db_paths:
+                stats = score_run(db_path)
+                if stats:
+                    condition_scores.append(stats)
+            if condition_scores:
+                condition_dfs[condition] = {
+                    "mean_language_score": round(
+                        sum(s["mean_language_score"] for s in condition_scores)
+                        / len(condition_scores), 3
+                    ),
+                    "mean_logic_score": round(
+                        sum(s["mean_logic_score"] for s in condition_scores)
+                        / len(condition_scores), 3
+                    ),
+                    "consistency_rate": round(
+                        sum(s["consistency_rate"] for s in condition_scores)
+                        / len(condition_scores), 3
+                    ),
+                    "contamination_rate": round(
+                        sum(s["contamination_rate"] for s in condition_scores)
+                        / len(condition_scores), 3
+                    ),
+                }
+
+    # ── Compute BCI ───────────────────────────────────────────────────────────
+    bci_results: dict = {}
+    if not args.skip_bci:
+        print(f"\n{'='*60}")
+        print("BEHAVIORAL CONSISTENCY INDEX")
+        print(f"{'='*60}")
+        bci_results = compute_bci(condition_db_map)
+        print(json.dumps(bci_results.get("summary", {}), indent=2))
+
+    # ── Outcome classification ────────────────────────────────────────────────
+    outcome_by_condition: Dict[str, dict] = {}
+    for condition, db_paths in condition_db_map.items():
+        outcome_by_condition[condition] = classify_outcomes(db_paths)
+
+    # ── Write summary ─────────────────────────────────────────────────────────
+    summary = {
+        "experiment_id": experiment_id,
+        "scenario": args.scenario,
+        "conditions": args.conditions,
+        "runs_per_condition": args.runs,
+        "turns_per_run": args.turns,
+        "completed_at": datetime.utcnow().isoformat(),
+        "run_results": run_results,
+        "doctrine_fidelity_scores": condition_dfs,
+        "behavioral_consistency_index": bci_results.get("summary", {}),
+        "outcome_classifications": outcome_by_condition,
+    }
+
+    summary_path = Path(log_dir) / "experiment_summary.json"
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+
+    # ── Final report ──────────────────────────────────────────────────────────
+    print(f"\n{'='*60}")
+    print("EXPERIMENT COMPLETE")
+    print(f"{'='*60}")
+    print(f"  ID:     {experiment_id}")
+    print(f"  Runs:   {sum(1 for r in run_results if r['success'])}/{total_runs} successful")
+    print(f"  Summary: {summary_path}")
+
+    if condition_dfs:
+        print("\n  Doctrine Fidelity Scores (mean logic score):")
+        for cond, scores in condition_dfs.items():
+            print(f"    {cond:15s}: logic={scores['mean_logic_score']:.3f} "
+                  f"lang={scores['mean_language_score']:.3f} "
+                  f"consistent={scores['consistency_rate']:.3f} "
+                  f"contaminated={scores['contamination_rate']:.3f}")
+
+    if bci_results.get("summary"):
+        print("\n  Behavioral Consistency Index (lower = more consistent):")
+        for cond, bci in bci_results["summary"].items():
+            print(f"    {cond:15s}: BCI_action={bci.get('bci_action')} "
+                  f"BCI_category={bci.get('bci_category')}")
+
+    if outcome_by_condition:
+        print("\n  Outcome distributions:")
+        for cond, outcomes in outcome_by_condition.items():
+            print(f"    {cond:15s}: {outcomes}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,53 @@
+## Turn {turn} — Decision Required
+
+### Current Situation (Your Intelligence Assessment)
+
+**Crisis phase:** {crisis_phase}
+**Global tension:** {global_tension_band}
+**Active conflicts:** {active_conflicts}
+
+### Your Current Resources
+
+**Military posture:** {military_summary}
+**Economic standing:** {economic_summary}
+**Political standing:** {political_summary}
+
+### Your Relationships
+
+{relationships_summary}
+
+### Recent Events This Turn
+
+{recent_events}
+
+### Available Actions
+
+You may select ONE action from the following valid options:
+
+{available_actions}
+
+---
+
+## Structured Decision Rationale
+
+Before calling the action tool, work through the following reasoning schema. This reasoning will be logged and scored for doctrine fidelity. Be explicit.
+
+**1. Perceived Situation**
+What is the current state of the crisis from your perspective? What do the recent events signal?
+
+**2. Adversary Beliefs**
+What do you believe your primary adversary currently thinks — about your intentions, your capabilities, and their own position?
+
+**3. Objective This Turn**
+What is your specific goal for this decision? How does it serve your priority goals?
+
+**4. Alternatives Considered**
+Name at least two other actions you considered and briefly explain why you rejected them.
+
+**5. Doctrine Reasoning**
+Apply your prescribed decision doctrine explicitly. How does your doctrine frame this situation, and what does it recommend?
+
+**6. Action Selection**
+State your chosen action and why it is optimal given your doctrine, objectives, and constraints.
+
+After completing this reasoning, call the submit_action tool with your decision.

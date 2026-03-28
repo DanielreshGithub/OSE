@@ -1,0 +1,21 @@
+# Environment
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.uv/
+
+# Run logs — SQLite files can be large; exclude from repo
+logs/runs/*.db
+
+# macOS
+.DS_Store
+
+# Reports / analysis output
+reports/
+analysis/
