@@ -1,5 +1,12 @@
 # OSE — Omni-Simulation Engine
 
+**Status:** Active
+**Started:** 2026-03-26
+**Build status:** v0.3 — capability system, pressure model, open-ended event generation complete · ready for first run
+**Repo:** `~/Documents/OSE/`
+
+---
+
 ## Purpose
 
 OSE is a modular geopolitical conflict simulation framework where LLM agents play real-world state actors and make decisions that update a shared world state over multiple turns.
@@ -18,26 +25,31 @@ OSE is not a game. It is a **research instrument**.
 
 ```mermaid
 flowchart TD
-    WS([World State]) --> PF[Perception Filter\nnoise scaled to actor intel quality]
+    WS([World State]) --> CAP[Capability Builder\nderive 13-field capability vector per actor]
+    WS --> PRES[Pressure Model\ncompute 8-dimension pressure state]
+    CAP --> PF[Perception Filter\nnoise scaled to actor intel quality]
+    PRES --> PF
     PF --> PP[Persona Prompt\ndoctrine · identity · war aversion · history]
-    PP --> DP[Decision Prompt\n6-step rationale schema]
+    PP --> DP[Decision Prompt\ncapabilities + pressures + available actions]
     DP --> LLM{Claude Sonnet\nwrites reasoning then calls action tool}
     LLM --> AP[Action Parser\nconverts output to typed action]
-    AP --> V{Rule Validator\nno LLM · pure logic}
+    AP --> V{Rule Validator\ncapability-gated · pure logic}
     V -->|valid| TR[Turn Resolver\nall actors resolved simultaneously]
     V -->|invalid| RT[Retry\nerror feedback injected]
     RT -->|up to 2x| LLM
     RT -->|still invalid| FB[Hold Position\nfallback action]
-    TR --> MUT[State Mutation\nresource deltas applied]
-    MUT --> CD[Cascade Detector\n6 structural downstream rules]
+    TR --> MUT[State Mutation\nresource deltas + action costs applied]
+    MUT --> CD[Cascade Detector\n9 rules · 6 escalatory + 3 de-escalatory]
     CD --> LOG[Logger\nfull reasoning trace saved to SQLite]
     LOG --> NEXT([Next Turn])
-    POOL([Event Pool\n16 events rolled live each turn]) --> TR
+    EG([Event Generator\npressure-gated + capability-gated\nweighted sampling each turn]) --> TR
 
     style V fill:#c0392b,color:#fff
     style LLM fill:#2980b9,color:#fff
     style CD fill:#8e44ad,color:#fff
-    style POOL fill:#16a085,color:#fff
+    style EG fill:#16a085,color:#fff
+    style CAP fill:#d35400,color:#fff
+    style PRES fill:#d35400,color:#fff
 ```
 
 ### Module Dependency Graph
@@ -48,6 +60,8 @@ graph LR
         State[State Models\nall Pydantic resources]
         Events[Event Models\ndecisions · logs · records]
         RelGraph[Relationship Graph\nbilateral query wrapper]
+        WCap[Capability Vector\n13-field normalized actor vector]
+        WPres[Pressure State\n8-dimension pressure model]
     end
 
     subgraph Actors["Actor Layer"]
@@ -58,15 +72,21 @@ graph LR
 
     subgraph Engine["Engine Layer"]
         Actions[Action Space\n25 typed action classes]
-        Validator[Validator\nrule-based firewall]
+        Validator[Validator\ncapability-gated firewall]
         Resolver[Turn Resolver\nsimultaneous conflict adjudication]
-        Cascade[Cascade Detector\n6 structural downstream rules]
+        Cascade[Cascade Detector\n9 rules · escalatory + de-escalatory]
         Loop[Simulation Loop\nfull turn lifecycle]
+        ECap[Capability Builder\nbuild_actor_capabilities per turn]
+        EPres[Pressure Tracker\nScenarioPressureModel · smoothed]
+        Perception[Perception Filter\ndeterministic SHA-256 noise]
+        Costs[Action Costs\nper-action resource depletion]
+        EventGen[Event Generator\npressure + capability gated]
+        ScenTemplate[Scenario Template\nOpenEndedScenarioTemplate ABC]
     end
 
     subgraph Scenarios["Scenario Layer"]
         ScenarioBase[Scenario Base\nABC interface]
-        Taiwan[Taiwan Strait\n4 actors · 16-event stochastic pool]
+        Taiwan[Taiwan Strait\n4 actors · pressure-gated event pool]
     end
 
     subgraph Scoring["Scoring Layer"]
@@ -87,10 +107,22 @@ graph LR
     State --> Actions
     State --> Resolver
     State --> Cascade
+    State --> ECap
+    State --> EPres
     Events --> LLMActor
     Events --> Loop
     Events --> BCI
     RelGraph --> LLMActor
+    WCap --> LLMActor
+    WCap --> Validator
+    WPres --> LLMActor
+    WPres --> EventGen
+    ECap --> WCap
+    EPres --> WPres
+    Perception --> LLMActor
+    Costs --> Resolver
+    EventGen --> Loop
+    ScenTemplate --> Taiwan
     Prompts --> Persona
     Persona --> LLMActor
     Actions --> LLMActor
@@ -100,7 +132,7 @@ graph LR
     Resolver --> Loop
     Cascade --> Loop
     LLMActor --> Loop
-    ScenarioBase --> Taiwan
+    ScenarioBase --> ScenTemplate
     Taiwan --> Loop
     Loop --> Fidelity
     Runner --> Loop
@@ -116,41 +148,42 @@ graph LR
 ```
 
 ### Turn Lifecycle
+
 ```mermaid
 sequenceDiagram
     participant Scenario as Event Pool
     participant Engine as Simulation Engine
-    participant Agent as LLM Actor
-    participant Model as Claude Sonnet
+    participant Actor as LLM Actor
+    participant LLM as Claude Sonnet
     participant Validator
     participant Resolver as Turn Resolver
     participant Cascade
     participant Logger
 
-    Engine->>Scenario: roll events against current tension
-    Note over Scenario: Each of 16 events checked independently<br/>Fires only if tension preconditions met
-    Scenario-->>Engine: 0-3 events this turn
+    Engine->>Scenario: generate events against live pressure + capability state
+    Note over Scenario: Pressure-gated + capability-gated weighted sampling<br/>Dynamic budget: 1–3 events based on crisis_instability + uncertainty
+    Scenario-->>Engine: 0–3 events this turn
 
-    loop All 4 agents in parallel
-        Engine->>Agent: decide state
-        Agent->>Agent: filter world state and add intel noise
-        Agent->>Model: persona, doctrine, situation
-        Note over Model: Writes full reasoning first<br/>then submits structured action
-        Model-->>Agent: reasoning trace and action
-        Agent->>Validator: check action legality
+    loop All 4 actors in parallel
+        Engine->>Actor: decide(world state)
+        Actor->>Actor: filter world state + add intel noise
+        Actor->>LLM: persona · doctrine · situation
+        Note over LLM: Writes full chain-of-thought first<br/>then submits structured action
+        LLM-->>Actor: reasoning trace + action
+        Actor->>Validator: check action legality
         alt valid
-            Validator-->>Agent: approved
+            Validator-->>Actor: approved
         else invalid
-            Validator-->>Agent: error list
-            Agent->>Model: retry with corrections, max 2x
+            Validator-->>Actor: error list
+            Actor->>LLM: retry with corrections (max 2x)
         end
-        Agent-->>Engine: action and full reasoning trace
+        Actor-->>Engine: action + full reasoning trace
     end
 
     Engine->>Resolver: resolve all actions simultaneously
-    Resolver-->>Engine: updated state and turn events
+    Resolver-->>Engine: updated state + turn events
 
-    Engine->>Cascade: check 6 structural rules
+    Engine->>Cascade: check 9 structural rules (6 escalatory + 3 de-escalatory)
     Cascade-->>Engine: additional state changes
 
     Engine->>Logger: save all decisions, events, reasoning traces
@@ -160,44 +193,29 @@ sequenceDiagram
 ### Experiment Design
 
 ```mermaid
-sequenceDiagram
-    participant Scenario as Event Pool
-    participant Engine as Simulation Engine
-    participant Agent as LLM Actor
-    participant Model as Claude Sonnet
-    participant Validator
-    participant Resolver as Turn Resolver
-    participant Cascade
-    participant Logger
-
-    Engine->>Scenario: roll events against current tension
-    Note over Scenario: Each of 16 events checked independently<br/>Fires only if tension preconditions met
-    Scenario-->>Engine: 0-3 events this turn
-
-    loop All 4 actors in parallel
-        Engine->>Agent: decide state
-        Agent->>Agent: filter world state and add intel noise
-        Agent->>Model: persona, doctrine, situation
-        Note over Model: Writes full reasoning first<br/>then submits structured action
-        Model-->>Agent: reasoning trace and action
-        Agent->>Validator: check action legality
-        alt valid
-            Validator-->>Agent: approved
-        else invalid
-            Validator-->>Agent: error list
-            Agent->>Model: retry with corrections, max 2x
-        end
-        Agent-->>Engine: action and full reasoning trace
+flowchart LR
+    subgraph Conditions["4 Doctrine Conditions"]
+        C1[Realist\npower · security dilemma]
+        C2[Liberal\ninterdependence · institutions]
+        C3[Org Process\nSOPs · bureaucratic inertia]
+        C4[Baseline\nno doctrine · LLM default]
     end
 
-    Engine->>Resolver: resolve all actions simultaneously
-    Resolver-->>Engine: updated state and turn events
+    subgraph Runs["N runs per condition"]
+        R1[Run 1]
+        R2[Run 2]
+        RN[Run N\npilot: 5 · full: 20]
+    end
 
-    Engine->>Cascade: check 6 structural rules
-    Cascade-->>Engine: additional state changes
+    subgraph Scoring["Measurement"]
+        DFS[Doctrine Fidelity Score\ndoes reasoning match doctrine?]
+        BCI[Behavioral Consistency Index\nare actions consistent across runs?]
+        OUT[Outcome Classification\nsuccess · failure · frozen]
+    end
 
-    Engine->>Logger: save all decisions, events, reasoning traces
-    Engine->>Engine: check terminal conditions
+    C1 & C2 & C3 & C4 --> R1 & R2 & RN
+    R1 & R2 & RN --> DFS & BCI & OUT
+    DFS & BCI & OUT --> Results([experiment_summary.json])
 ```
 
 ---
@@ -209,18 +227,26 @@ sequenceDiagram
 | `world/state.py` | WorldState, Actor (+ historical_precedents, institutional_constraints, cognitive_patterns, war_aversion fields), all resource models |
 | `world/events.py` | DecisionRecord, TurnLog, GlobalEvent, RunRecord |
 | `world/graph.py` | RelationshipGraph — named query wrapper over bilateral relationships |
+| `world/capabilities.py` | CapabilityVector — 13-field normalized actor capability model · as_bands() for LLM · clamp() for engine |
+| `world/pressures.py` | PressureState — 8-dimension pressure model · PressureDelta · apply_pressure_delta() |
 | `actors/base.py` | ActorInterface ABC |
 | `actors/persona.py` | build_persona_prompt() — 4 doctrine conditions + war_aversion injection |
-| `actors/llm_actor.py` | Full LLM pipeline: perception filter → tool_choice=auto → CoT → tool_use → validate → retry |
+| `actors/llm_actor.py` | Full LLM pipeline: perception filter → capability summary → tool_choice=auto → CoT → tool_use → validate → retry |
 | `actors/prompts/system.txt` | System prompt template — identity + war_aversion + historical precedents + doctrine |
 | `actors/prompts/decision.txt` | Per-turn prompt — situation + 6-step rationale schema |
-| `engine/actions.py` | 25 typed action classes + ACTION_REGISTRY + parser |
-| `engine/validator.py` | ActionValidator — pure rule-based firewall |
-| `engine/resolver.py` | Simultaneous resolution — all 25 actions, conflict adjudication |
-| `engine/cascade.py` | 6 cascade rules — structural downstream effects |
-| `engine/loop.py` | SimulationEngine — dynamic scenario events, full turn lifecycle + Rich display |
+| `engine/actions.py` | 25 typed action classes + ACTION_REGISTRY + parser + get_available_actions_for() |
+| `engine/validator.py` | ActionValidator — capability-gated rule-based firewall |
+| `engine/resolver.py` | Simultaneous resolution — all 25 actions, conflict adjudication, applies action costs |
+| `engine/cascade.py` | 9 cascade rules — 6 escalatory + 3 de-escalatory structural downstream effects |
+| `engine/loop.py` | SimulationEngine — ensure_derived_state() called 3×/turn, full lifecycle + Rich display |
+| `engine/capabilities.py` | build_actor_capabilities() → CapabilityVector · ACTION_CONSTRAINTS per-action gates · get_available_actions_for() |
+| `engine/pressures.py` | ScenarioPressureModel — ACTION_PRESSURE_MAP · smoothed pressure computation (α=0.40) |
+| `engine/perception.py` | build_perception_packet() — SHA-256 deterministic Gaussian noise · ally intel bonus +0.04 |
+| `engine/costs.py` | BASE_ACTION_COSTS — per-action resource depletion applied by resolver |
+| `engine/event_generation.py` | OpenEndedEventGenerator — pressure-gated + capability-gated weighted sampling · dynamic event budget |
+| `engine/scenario_template.py` | OpenEndedScenarioTemplate ABC — theater-adjusted capability profiles · full event pipeline |
 | `scenarios/base.py` | ScenarioDefinition ABC |
-| `scenarios/taiwan_strait.py` | 4-actor Taiwan Strait 2026 — full actor profiles, 16-event stochastic pool |
+| `scenarios/taiwan_strait.py` | 4-actor Taiwan Strait 2026 — full actor profiles, pressure/capability-gated event pool |
 | `cli/run.py` | Entry point — `python3 -m cli.run` |
 | `logs/logger.py` | SQLite logger — 4 tables, full prompt + reasoning stored |
 | `scoring/fidelity.py` | DoctrinesFidelityScorer — LLM-as-judge, 4 rubrics |
@@ -238,24 +264,67 @@ sequenceDiagram
 | Category | Count | Actions |
 |---|---|---|
 | Military | 8 | mobilize, strike, advance, withdraw, blockade, defensive_posture, probe, signal_resolve |
-| Diplomatic | 7 | negotiate, **targeted_sanction**, **comprehensive_sanction**, form_alliance, condemn, intel_sharing, back_channel |
-| Economic | 4 | embargo, foreign_aid, cut_supply, **technology_restriction** |
-| Information/Cyber | 3 | propaganda, partial_coercion, **cyber_operation** |
-| Nuclear | 1 | **nuclear_signal** |
+| Diplomatic | 7 | negotiate, targeted_sanction, comprehensive_sanction, form_alliance, condemn, intel_sharing, back_channel |
+| Economic | 4 | embargo, foreign_aid, cut_supply, technology_restriction |
+| Information/Cyber | 3 | propaganda, partial_coercion, cyber_operation |
+| Nuclear | 1 | nuclear_signal |
 | Inaction | 2 | hold_position, monitor |
-
-**Bold** = added in v0.2. Removed: `delay_commitment`, `wait_and_observe` (redundant with hold_position), `sanction` (split into targeted/comprehensive).
 
 Each action has: `is_valid(state) → (bool, errors)`, `get_expected_effects()`, resource cost fields.
 
-### Doctrine-Action Discrimination
+---
 
-| Doctrine | Distinctive action signals |
+## Capability System (v0.3)
+
+Every actor has a 13-field `CapabilityVector` rebuilt each turn from their raw resource state. Actors only see **qualitative bands** (HIGH/MEDIUM/LOW) — never raw floats.
+
+| Field | Derived From |
 |---|---|
-| `realist` | nuclear_signal, mobilize, strike, blockade — power currency logic |
-| `liberal` | negotiate, back_channel, targeted_sanction, form_alliance — interdependence preservation |
-| `org_process` | defensive_posture, monitor, targeted_sanction, intel_sharing — incremental SOPs |
-| `baseline` | LLM default prior (empirically expected to resemble realist) |
+| `local_naval_projection` | `naval_power × (1 + 0.3 × amphibious_capacity)` |
+| `local_air_projection` | `air_superiority × readiness` |
+| `missile_a2ad_capability` | `a2ad_effectiveness` |
+| `cyber_capability` | `decision_unity × 0.4 + readiness × 0.6` |
+| `intelligence_quality` | `actor.information_quality` |
+| `economic_coercion_capacity` | `trade_openness × foreign_reserves` |
+| `alliance_leverage` | max relationship alliance_strength across allies |
+| `logistics_endurance` | `foreign_reserves × 0.5 + industrial_capacity × 0.5` |
+| `domestic_stability` | `political.domestic_stability` |
+| `war_aversion` | `1.0 − casualty_tolerance` |
+| `escalation_tolerance` | `casualty_tolerance × 0.6 + readiness × 0.4` |
+| `bureaucratic_flexibility` | `decision_unity × 0.7 + regime_legitimacy × 0.3` |
+| `signaling_credibility` | `nuclear_capability × 0.5 + international_standing × 0.5` |
+
+### Action Constraints (Capability Gates)
+
+`get_available_actions_for(actor_id, state)` filters the action space before showing it to the LLM. Actors cannot choose actions they lack the capability for.
+
+| Action | Minimum Requirements |
+|---|---|
+| `nuclear_signal` | signaling_credibility ≥ 0.60 AND escalation_tolerance ≥ 0.60 |
+| `strike` | local_air_projection ≥ 0.40 OR local_naval_projection ≥ 0.40 |
+| `blockade` | local_naval_projection ≥ 0.45 |
+| `cyber_operation` | cyber_capability ≥ 0.35 |
+| `form_alliance` | alliance_leverage ≥ 0.25 AND signaling_credibility ≥ 0.30 |
+| `technology_restriction` | economic_coercion_capacity ≥ 0.40 |
+
+---
+
+## Pressure System (v0.3)
+
+`ScenarioPressureModel` computes an 8-dimension `PressureState` each turn. Pressures gate event generation and appear in actor perception packets.
+
+| Dimension | Meaning |
+|---|---|
+| `military_pressure` | Mobilization and strike activity across all actors |
+| `diplomatic_pressure` | Sanction, embargo, condemnation accumulation |
+| `alliance_pressure` | Alliance cohesion stress |
+| `domestic_pressure` | Internal political instability |
+| `economic_pressure` | GDP degradation and trade disruption |
+| `informational_pressure` | Propaganda and disinformation activity |
+| `crisis_instability` | Aggregate crisis volatility — gates dynamic event budget |
+| `uncertainty` | Contradictory signals in recent events |
+
+Pressures are **smoothed** each turn: `new = (1 − α) × previous + α × computed` (α = 0.40). `ACTION_PRESSURE_MAP` defines per-action pressure deltas — e.g., `negotiate → {diplomatic_pressure: −0.06, crisis_instability: −0.04}`, `strike → {military_pressure: +0.12, crisis_instability: +0.08}`.
 
 ---
 
@@ -308,15 +377,19 @@ graph TD
     style JPN fill:#e67e22,color:#fff
 ```
 
-### Stochastic Event Pool (16 events, turns 1+)
+### Event Generation System (v0.3)
 
-Turn 0 has one scripted ignition event (PRC announces PLAN exercises, +0.06 tension). Every subsequent turn rolls independently from the pool.
+Turn 0 has one scripted ignition event (PRC announces PLAN exercises, +0.06 tension). Every subsequent turn uses `OpenEndedEventGenerator` — pressure-gated and capability-gated weighted sampling with a seeded RNG for reproducibility.
+
+**Event budget per turn:** 1 base + up to +2 for high `crisis_instability` / `uncertainty` / `economic_pressure`.
+
+**Event templates have four gates:** `pressure_gates` (minimum pressure threshold), `capability_gates` (actor capability required), `phase_bias` (weight multiplier per crisis phase), `recent_action_bias` (weight boost if matching action occurred last turn).
 
 ```mermaid
 flowchart LR
-    LiveState([Live tension\nrolled each turn])
+    LiveState([Pressure State\ncomputed each turn])
 
-    subgraph Escalatory["🔴 Escalatory — 7 events"]
+    subgraph Escalatory["Escalatory — 7 events"]
         E1[PLAN warship enters Taiwan waters · +0.05]
         E2[PLA ballistic missile test · +0.07]
         E3[PRC reunification ultimatum in state media · +0.04]
@@ -326,7 +399,7 @@ flowchart LR
         E7[PRC coast guard blockade of outlying islands · +0.03]
     end
 
-    subgraph DeEscalatory["🟢 De-escalatory — 6 events"]
+    subgraph DeEscalatory["De-escalatory — 6 events"]
         D1[US–PRC back-channel diplomatic call · −0.04]
         D2[PRC announces exercises concluded · −0.05]
         D3[ASEAN joint restraint statement · −0.03]
@@ -335,7 +408,7 @@ flowchart LR
         D6[US–PRC military hotline activated · −0.03]
     end
 
-    subgraph Neutral["⚪ Neutral / Ambiguous — 3 events"]
+    subgraph Neutral["Neutral / Ambiguous — 3 events"]
         N1[Major Taiwan earthquake · −0.02]
         N2[Global oil price spike · +0.02]
         N3[International media frenzy · +0.02]
@@ -343,8 +416,6 @@ flowchart LR
 
     LiveState --> Escalatory & DeEscalatory & Neutral
 ```
-
-Each event rolls independently each turn. Tension preconditions gate realism (e.g. "exercises concluded" only fires if tension ≤ 0.70).
 
 ### Terminal Conditions
 
@@ -361,7 +432,7 @@ Each event rolls independently each turn. Tension preconditions gate realism (e.
 flowchart TD
     Action([Resolved Actions this Turn])
 
-    subgraph Escalatory["🔴 Escalatory"]
+    subgraph Escalatory["Escalatory"]
         R1[Phase Transition\ntension crosses threshold → crisis phase changes]
         R2[Strike Cascade\nstruck actor's allies raise military readiness]
         R3[Mobilization Cascade\nadversaries raise threat perception in response]
@@ -370,7 +441,7 @@ flowchart TD
         R6[Economic Collapse\nGDP below critical threshold → domestic instability]
     end
 
-    subgraph Deescalatory["🟢 De-escalatory"]
+    subgraph Deescalatory["De-escalatory"]
         R7[Diplomatic De-escalation\nnegotiate reduces threat perception and tension\nmutual negotiation triggers stronger bilateral effect]
         R8[Back-Channel Cascade\nquiet diplomacy reduces target's threat perception]
         R9[Aid and Alliance Cascade\nforeign aid stabilizes recipient · intel sharing builds trust\nalliance formation strengthens systemic cohesion]
@@ -392,6 +463,15 @@ flowchart TD
 | `liberal` | Keohane / Nye | Absolute gains; interdependence costs; multilateral legitimacy; reputation preservation |
 | `org_process` | Allison Model II | SOP selection; satisficing; incremental over pivot; bureaucratic constraints binding |
 | `baseline` | None | Actor identity only — empirically expected to resemble realist (LLM default prior) |
+
+### Doctrine-Action Discrimination
+
+| Doctrine | Distinctive action signals |
+|---|---|
+| `realist` | nuclear_signal, mobilize, strike, blockade — power currency logic |
+| `liberal` | negotiate, back_channel, targeted_sanction, form_alliance — interdependence preservation |
+| `org_process` | defensive_posture, monitor, targeted_sanction, intel_sharing — incremental SOPs |
+| `baseline` | LLM default prior (empirically expected to resemble realist) |
 
 ---
 
@@ -473,6 +553,7 @@ python3 -m analysis.report --runs logs/runs/ --llm --latex --output reports/
 | 4 | Taiwan Strait scenario + CLI | ✅ Done |
 | 5 | Scoring layer (DFS + BCI) + experiment runner | ✅ Done |
 | 5b | v0.2 improvements (action space, stochastic events, reasoning traces, actor profiles) | ✅ Done |
+| 5c | v0.3 improvements (capability system · pressure model · perception filter · action costs · open-ended event generation · de-escalatory cascade rules) | ✅ Done |
 | 6 | Run pilot experiment (4×5) | ⬜ Next |
 | 7 | Analysis engine (engine + LLM analyst + Markdown/LaTeX renderer + CLI) | ✅ Done |
 | 8 | Research write-up | ⬜ Pending |
@@ -487,6 +568,7 @@ python3 -m analysis.report --runs logs/runs/ --llm --latex --output reports/
 - **Single scenario**: All findings are Taiwan Strait-specific. Generalizability requires a second scenario.
 - **Baseline confound**: Baseline condition reflects LLM default prior (likely realist-adjacent), not a clean null.
 - **Haiku judge**: Secondary LLM is weaker than the decision LLM; complex reasoning distinctions may be mis-scored.
+- **IV-clarity trade-off (v0.3)**: Capability-gated action filtering improves behavioral realism but creates a confound — some doctrine-appropriate actions may be unavailable due to actor capability state, not doctrine resistance. Methods section must distinguish capability-blocked decisions from doctrine-non-compliant ones.
 
 ---
 
@@ -494,9 +576,9 @@ python3 -m analysis.report --runs logs/runs/ --llm --latex --output reports/
 
 - Add a second scenario (Ukraine, South China Sea) to test generalizability?
 - Manual annotation sample: have IR scholar score 20–30 traces to validate Haiku judge (r ≥ 0.70 target)?
-- Should cascade rules gain de-escalatory effects for cooperative actions?
 - Scoring: should the judge LLM also see the action chosen, or only the reasoning trace?
 - Should actors be shown outcome classifications from prior runs to build trajectory awareness?
+- Does capability-gated action filtering confound the doctrine IV? (e.g., realist doctrine may push toward nuclear_signal but TWN is capability-blocked — is that doctrine failing or realism working?)
 
 ---
 
@@ -522,5 +604,10 @@ python3 -m analysis.report --runs logs/runs/ --llm --latex --output reports/
 | 2026-03-27 | Full actor behavioral profiles | historical_precedents + institutional_constraints + cognitive_patterns grounds LLM behavior in real-world decision patterns |
 | 2026-03-27 | Analysis engine: hybrid stats + optional LLM | Pure Python deterministic stats (engine.py) + optional Sonnet qualitative layer (analyst.py); inflection-point trace sampling keeps LLM context manageable; dual Markdown/LaTeX output |
 | 2026-03-27 | Inflection-point sampling for LLM analysis | Feeding all traces would blow context; instead sample max 6/run: first active action per actor, phase transitions, contamination flags — high signal density |
-
----
+| 2026-03-28 | Capability Vector system (13 fields) | Actors had no grounding for why certain actions were impossible; capability gates derived from actor resources prevent hallucinated escalation (e.g. TWN cannot nuclear_signal) |
+| 2026-03-28 | Pressure State system (8 dimensions) | Events and cascades lacked environmental context; pressure model provides smoothed, lagged signal that gates event generation and appears in actor perception |
+| 2026-03-28 | OpenEndedEventGenerator replacing simple probability rolls | Fixed probability pool was insensitive to world state; pressure + capability gates create realistic conditional event generation that responds to actor behavior |
+| 2026-03-28 | De-escalatory cascade rules (Rules 7–9) | Cooperative actions had no structural reward; asymmetry was producing deterministic escalation |
+| 2026-03-28 | Perception filter with deterministic SHA-256 noise | LLM actors were seeing exact world state floats; noise scaled by information_quality and relationship type creates realistic intelligence uncertainty |
+| 2026-03-28 | Action costs wired into resolver | Actions had no resource depletion; military activity needed to deplete readiness, economic actions needed to deplete foreign reserves |
+| 2026-03-28 | IV-clarity trade-off accepted | v0.3 capability/pressure grounding makes behavioral realism stronger but weakens clean experimental control — methods section must acknowledge |
