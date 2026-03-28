@@ -161,29 +161,44 @@ sequenceDiagram
 ### Experiment Design
 
 ```mermaid
-flowchart LR
-    subgraph Conditions["4 Doctrine Conditions"]
-        C1[Realist\npower · security dilemma]
-        C2[Liberal\ninterdependence · institutions]
-        C3[Org Process\nSOPs · bureaucratic inertia]
-        C4[Baseline\nno doctrine · LLM default]
+sequenceDiagram
+    participant Scenario as Event Pool
+    participant Engine as Simulation Engine
+    participant Agent as LLM Actor
+    participant Model as Claude Sonnet
+    participant Validator
+    participant Resolver as Turn Resolver
+    participant Cascade
+    participant Logger
+
+    Engine->>Scenario: roll events against current tension
+    Note over Scenario: Each of 16 events checked independently<br/>Fires only if tension preconditions met
+    Scenario-->>Engine: 0-3 events this turn
+
+    loop All 4 actors in parallel
+        Engine->>Agent: decide state
+        Agent->>Agent: filter world state and add intel noise
+        Agent->>Model: persona, doctrine, situation
+        Note over Model: Writes full reasoning first<br/>then submits structured action
+        Model-->>Agent: reasoning trace and action
+        Agent->>Validator: check action legality
+        alt valid
+            Validator-->>Agent: approved
+        else invalid
+            Validator-->>Agent: error list
+            Agent->>Model: retry with corrections, max 2x
+        end
+        Agent-->>Engine: action and full reasoning trace
     end
 
-    subgraph Runs["N runs per condition"]
-        R1[Run 1]
-        R2[Run 2]
-        RN[Run N\npilot: 5 · full: 20]
-    end
+    Engine->>Resolver: resolve all actions simultaneously
+    Resolver-->>Engine: updated state and turn events
 
-    subgraph Scoring["Measurement"]
-        DFS[Doctrine Fidelity Score\ndoes reasoning match doctrine?]
-        BCI[Behavioral Consistency Index\nare actions consistent across runs?]
-        OUT[Outcome Classification\nsuccess · failure · frozen]
-    end
+    Engine->>Cascade: check 6 structural rules
+    Cascade-->>Engine: additional state changes
 
-    C1 & C2 & C3 & C4 --> R1 & R2 & RN
-    R1 & R2 & RN --> DFS & BCI & OUT
-    DFS & BCI & OUT --> Results([experiment_summary.json])
+    Engine->>Logger: save all decisions, events, reasoning traces
+    Engine->>Engine: check terminal conditions
 ```
 
 ---
