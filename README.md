@@ -153,41 +153,48 @@ graph LR
 sequenceDiagram
     participant Scenario as Event Pool
     participant Engine as Simulation Engine
-    participant Actor as LLM Actor
+    participant Agent as State Agent
     participant LLM as Claude Sonnet
-    participant Validator
+    participant Validator as Rule Validator
     participant Resolver as Turn Resolver
     participant Cascade
     participant Logger
 
-    Engine->>Scenario: generate events against live pressure + capability state
-    Note over Scenario: Pressure-gated + capability-gated weighted sampling<br/>Dynamic budget: 1–3 events based on crisis_instability + uncertainty
-    Scenario-->>Engine: 0–3 events this turn
+    Engine->>Scenario: generate events (tension + capability)
+    Note over Scenario: Weighted sampling based on<br/>crisis_instability + actor uncertainty
+    Scenario-->>Engine: 0–3 events (e.g., "Cyber Probe Detected")
 
-    loop All 4 actors in parallel
-        Engine->>Actor: decide(world state)
-        Actor->>Actor: filter world state + add intel noise
-        Actor->>LLM: persona · doctrine · situation
-        Note over LLM: Writes full chain-of-thought first<br/>then submits structured action
-        LLM-->>Actor: reasoning trace + action
-        Actor->>Validator: check action legality
+    loop Each State Actor
+        Engine->>Agent: Request Action(world state)
+        Agent->>Agent: Apply Perception Filter (Jervis)
+        Note right of Agent: Injects noise based on<br/>Intel Quality (0.0 - 1.0)
+        
+        Agent->>Agent: Load Strategy Profile (2026 NDS/ODC)
+        Note right of Agent: Loads hard constraints:<br/>e.g., US "Integrated Deterrence"<br/>or Taiwan "Asymmetric Porcupine"
+        
+        Agent->>LLM: Persona + Doctrine + Strategy + Perceived State
+        Note over LLM: 6-step rationale required:<br/>1. Situation, 2. Doctrine check,<br/>3. Capability check, 4. Risk...
+        
+        LLM-->>Agent: Reasoning trace + Action call
+        
+        Agent->>Validator: check action legality (Physical/Political)
         alt valid
-            Validator-->>Actor: approved
+            Validator-->>Agent: approved
         else invalid
-            Validator-->>Actor: error list
-            Actor->>LLM: retry with corrections (max 2x)
+            Validator-->>Agent: error (e.g., "Insufficient Lift Capability")
+            Agent->>LLM: retry with constraints (max 2x)
         end
-        Actor-->>Engine: action + full reasoning trace
+        Agent-->>Engine: Action + Final Rationale
     end
 
-    Engine->>Resolver: resolve all actions simultaneously
-    Resolver-->>Engine: updated state + turn events
+    Engine->>Resolver: Resolve all actions (Simultaneous)
+    Resolver-->>Engine: New Base State + Outcome Events
 
-    Engine->>Cascade: check 9 structural rules (6 escalatory + 3 de-escalatory)
-    Cascade-->>Engine: additional state changes
+    Engine->>Cascade: check structural rules (9 logic gates)
+    Cascade-->>Engine: Secondary changes (e.g., market flight)
 
-    Engine->>Logger: save all decisions, events, reasoning traces
-    Engine->>Engine: check terminal conditions
+    Engine->>Logger: Log telemetry (BCI/DFS metadata)
+    Engine->>Engine: Terminal check (De-escalation or War)
 ```
 
 ### Experiment Design
