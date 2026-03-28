@@ -116,13 +116,12 @@ graph LR
 ```
 
 ### Turn Lifecycle
-
-```mermaid
+```
 sequenceDiagram
     participant Scenario as Event Pool
     participant Engine as Simulation Engine
-    participant Actor as LLM Actor
-    participant LLM as Claude Sonnet
+    participant Agent as LLM Actor
+    participant Model as Claude Sonnet
     participant Validator
     participant Resolver as Turn Resolver
     participant Cascade
@@ -130,26 +129,26 @@ sequenceDiagram
 
     Engine->>Scenario: roll events against current tension
     Note over Scenario: Each of 16 events checked independently<br/>Fires only if tension preconditions met
-    Scenario-->>Engine: 0–3 events this turn
+    Scenario-->>Engine: 0-3 events this turn
 
-    loop All 4 actors in parallel
-        Engine->>Actor: decide(world state)
-        Actor->>Actor: filter world state + add intel noise
-        Actor->>LLM: persona · doctrine · situation
-        Note over LLM: Writes full chain-of-thought first<br/>then submits structured action
-        LLM-->>Actor: reasoning trace + action
-        Actor->>Validator: check action legality
+    loop All 4 agents in parallel
+        Engine->>Agent: decide state
+        Agent->>Agent: filter world state and add intel noise
+        Agent->>Model: persona, doctrine, situation
+        Note over Model: Writes full reasoning first<br/>then submits structured action
+        Model-->>Agent: reasoning trace and action
+        Agent->>Validator: check action legality
         alt valid
-            Validator-->>Actor: approved
+            Validator-->>Agent: approved
         else invalid
-            Validator-->>Actor: error list
-            Actor->>LLM: retry with corrections (max 2x)
+            Validator-->>Agent: error list
+            Agent->>Model: retry with corrections, max 2x
         end
-        Actor-->>Engine: action + full reasoning trace
+        Agent-->>Engine: action and full reasoning trace
     end
 
     Engine->>Resolver: resolve all actions simultaneously
-    Resolver-->>Engine: updated state + turn events
+    Resolver-->>Engine: updated state and turn events
 
     Engine->>Cascade: check 6 structural rules
     Cascade-->>Engine: additional state changes
