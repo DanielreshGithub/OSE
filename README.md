@@ -116,7 +116,7 @@ graph LR
 ```
 
 ### Turn Lifecycle
-```
+```mermaid
 sequenceDiagram
     participant Scenario as Event Pool
     participant Engine as Simulation Engine
