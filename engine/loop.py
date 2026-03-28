@@ -28,8 +28,10 @@ from rich.panel import Panel
 from rich import box
 
 from world.state import WorldState, Actor
+from world.pressures import PressureState
 from world.events import GlobalEvent, TurnLog, RunRecord, DecisionRecord
 from engine.actions import BaseAction
+from engine.pressures import ScenarioPressureModel
 from engine.resolver import TurnResolver
 from engine.cascade import CascadeDetector
 from logs.logger import StructuredLogger
@@ -67,6 +69,8 @@ class SimulationEngine:
         actors: Dict[str, Any],          # short_name -> LLMDecisionActor
         doctrine_condition: str,
         run_id: Optional[str] = None,
+        run_number: int = 1,
+        seed: int = 0,
         log_dir: str = "logs/runs",
         verbose: bool = True,
         scenario: Optional[Any] = None,  # ScenarioDefinition — for dynamic per-turn events
@@ -75,11 +79,19 @@ class SimulationEngine:
         self.actors = actors
         self.doctrine_condition = doctrine_condition
         self.run_id = run_id or str(uuid.uuid4())[:8]
+        self.run_number = run_number
+        self.seed = int(seed)
         self.verbose = verbose
         self._scenario = scenario        # If provided, call get_turn_events(turn, state) live
 
+        self.state.random_seed = self.seed
+        self.state.ensure_derived_state()
+        if self._scenario is not None:
+            setattr(self._scenario, "seed", self.seed)
+
         self._resolver = TurnResolver()
         self._cascade = CascadeDetector()
+        self._pressure_model = ScenarioPressureModel(self.state.scenario_id)
         self._logger = StructuredLogger(log_dir=log_dir, run_id=self.run_id)
 
         # Terminal condition tracking
@@ -107,7 +119,8 @@ class SimulationEngine:
             run_id=self.run_id,
             scenario_name=self.state.scenario_name,
             doctrine_condition=self.doctrine_condition,
-            run_number=1,
+            run_number=self.run_number,
+            seed=self.seed,
             total_turns=max_turns,
             final_crisis_phase=self.state.crisis_phase,
             final_global_tension=self.state.global_tension,
@@ -125,7 +138,10 @@ class SimulationEngine:
                 injected = self._scenario.get_turn_events(turn, self.state)
             else:
                 injected = scenario_events.get(turn, [])
+            pressure_before, event_generation_audit, visible_injected = self._extract_scenario_audit(injected)
+            self.state.pressures = pressure_before
             self._apply_injected_events(injected)
+            self.state.ensure_derived_state()
 
             if self.verbose:
                 self._display_turn_header(turn)
@@ -146,9 +162,19 @@ class SimulationEngine:
 
             # 4. Cascade detection
             self.state, cascade_events = self._cascade.detect(self.state, decisions)
+            all_events = injected + turn_events + cascade_events
+            pressure_after = self._pressure_model.compute(
+                self.state,
+                turn_actions=decisions,
+                recent_events=all_events,
+                previous=pressure_before,
+            )
+            self.state.pressures = pressure_after
+            self.state.ensure_derived_state()
+
+            terminal, terminal_checks = self._evaluate_terminal(decisions)
 
             # 5. Log all events
-            all_events = injected + turn_events + cascade_events
             for event in all_events:
                 self._logger.log_event(event, self.run_id)
 
@@ -165,22 +191,27 @@ class SimulationEngine:
                 doctrine_condition=self.doctrine_condition,
                 crisis_phase=self.state.crisis_phase,
                 global_tension=self.state.global_tension,
-                events_this_turn=injected + turn_events,
+                pressure_before=pressure_before.to_trace(),
+                pressure_after=pressure_after.to_trace(),
+                events_this_turn=visible_injected + turn_events,
                 decisions=[record for _, record in decisions.values()],
                 cascade_events=cascade_events,
+                event_generation_audit=event_generation_audit,
+                perception_packets=self._collect_perception_packets(decisions),
+                state_mutations=self._collect_state_mutations(decisions, all_events),
+                terminal_checks=terminal_checks,
                 world_state_snapshot=self._snapshot(),
+                terminal_condition_met=terminal,
             )
-            self._logger.log_turn(turn_log)
             self.state.turn_logs.append(turn_log)
+            self._logger.log_turn(turn_log)
 
             # 6. Display
             if self.verbose:
-                self._display_turn_summary(turn, decisions, turn_events, cascade_events)
+                self._display_turn_summary(turn, decisions, visible_injected + turn_events, cascade_events)
 
             # 7. Check terminal conditions
-            terminal = self._check_terminal(decisions)
             if terminal:
-                turn_log.terminal_condition_met = terminal
                 self._outcome = terminal
                 if self.verbose:
                     console.print(
@@ -216,23 +247,110 @@ class SimulationEngine:
             delta = event.world_state_delta
             if "global_tension_delta" in delta:
                 self.state.global_tension = max(0.0, min(1.0,
-                    self.state.global_tension + float(delta["global_tension_delta"])
+                self.state.global_tension + float(delta["global_tension_delta"])
                 ))
+
+    def _extract_scenario_audit(
+        self,
+        events: List[GlobalEvent],
+    ) -> Tuple[PressureState, List[Dict[str, Any]], List[GlobalEvent]]:
+        pressure_state = self._pressure_model.compute(self.state, previous=self.state.pressures)
+        audit: List[Dict[str, Any]] = []
+        visible_events: List[GlobalEvent] = []
+        for event in events:
+            delta = event.world_state_delta or {}
+            pressure_snapshot = delta.get("pressure_snapshot")
+            if pressure_snapshot:
+                pressure_state = self._pressure_state_from_snapshot(pressure_snapshot)
+                audit_payload = delta.get("audit")
+                if isinstance(audit_payload, dict):
+                    audit = [audit_payload]
+                elif isinstance(audit_payload, list):
+                    audit = audit_payload
+                continue
+            visible_events.append(event)
+        return pressure_state, audit, visible_events
+
+    def _pressure_state_from_snapshot(self, snapshot: Dict[str, Any]) -> PressureState:
+        return PressureState(
+            military_pressure=float(snapshot.get("military_pressure", 0.0)),
+            diplomatic_pressure=float(snapshot.get("diplomatic_pressure", 0.0)),
+            alliance_pressure=float(snapshot.get("alliance_pressure", 0.0)),
+            domestic_pressure=float(snapshot.get("domestic_pressure", 0.0)),
+            economic_pressure=float(snapshot.get("economic_pressure", 0.0)),
+            informational_pressure=float(
+                snapshot.get("informational_pressure", snapshot.get("information_pressure", 0.0))
+            ),
+            crisis_instability=float(snapshot.get("crisis_instability", 0.0)),
+            uncertainty=float(snapshot.get("uncertainty", 0.0)),
+            turn=int(snapshot.get("turn", self.state.turn)),
+            scenario_id=str(snapshot.get("notes", {}).get("scenario_id", self.state.scenario_id)),
+            metadata={
+                "source": "scenario_audit",
+                "snapshot": snapshot,
+            },
+        )
+
+    def _collect_perception_packets(
+        self,
+        decisions: Dict[str, Tuple[BaseAction, DecisionRecord]],
+    ) -> Dict[str, Any]:
+        packets: Dict[str, Any] = {}
+        for actor_id, (_, record) in decisions.items():
+            try:
+                packets[actor_id] = {
+                    "packet": json.loads(record.perception_block),
+                    "metadata": record.perception_metadata,
+                }
+            except json.JSONDecodeError:
+                packets[actor_id] = {
+                    "packet": record.perception_block,
+                    "metadata": record.perception_metadata,
+                }
+        return packets
+
+    def _collect_state_mutations(
+        self,
+        decisions: Dict[str, Tuple[BaseAction, DecisionRecord]],
+        events: List[GlobalEvent],
+    ) -> List[Dict[str, Any]]:
+        mutations: List[Dict[str, Any]] = []
+        for actor_id, (action, _) in decisions.items():
+            mutations.append({
+                "actor": actor_id,
+                "action_type": action.action_type,
+                "expected_effects": action.get_expected_effects(),
+            })
+        for event in events:
+            if event.world_state_delta:
+                mutations.append({
+                    "event": event.description,
+                    "source": event.source,
+                    "delta": event.world_state_delta,
+                })
+        return mutations
 
     # ── Terminal condition checks ─────────────────────────────────────────────
 
-    def _check_terminal(
+    def _evaluate_terminal(
         self, decisions: Dict[str, Tuple[BaseAction, Any]]
-    ) -> Optional[str]:
+    ) -> Tuple[Optional[str], Dict[str, Any]]:
         from engine.actions import DefensivePostureAction, HoldPositionAction, MonitorAction
 
+        details = {
+            "war_failure": self.state.crisis_phase == "war" and self.state.global_tension >= 0.90,
+            "deescalation_success": self.state.crisis_phase in ("peacetime", "tension") and self.state.global_tension <= 0.30,
+            "all_passive_for_three_turns": False,
+            "per_actor_passive_streaks": {},
+        }
+
         # Deterrence failure: war phase + high tension
-        if self.state.crisis_phase == "war" and self.state.global_tension >= 0.90:
-            return "deterrence_failure"
+        if details["war_failure"]:
+            return "deterrence_failure", details
 
         # Deterrence success: de-escalated to low tension
-        if self.state.crisis_phase in ("peacetime", "tension") and self.state.global_tension <= 0.30:
-            return "deterrence_success"
+        if details["deescalation_success"]:
+            return "deterrence_success", details
 
         # Frozen conflict: all actors in passive posture for 3+ turns
         for name, (action, _) in decisions.items():
@@ -241,11 +359,13 @@ class SimulationEngine:
                     self._consecutive_defensive_turns.get(name, 0) + 1
             else:
                 self._consecutive_defensive_turns[name] = 0
+        details["per_actor_passive_streaks"] = dict(self._consecutive_defensive_turns)
 
         if all(v >= 3 for v in self._consecutive_defensive_turns.values()):
-            return "frozen_conflict"
+            details["all_passive_for_three_turns"] = True
+            return "frozen_conflict", details
 
-        return None
+        return None, details
 
     def _classify_final_outcome(self) -> str:
         """Classify outcome when max_turns is reached without terminal condition."""
@@ -266,6 +386,7 @@ class SimulationEngine:
             "turn": self.state.turn,
             "crisis_phase": self.state.crisis_phase,
             "global_tension": round(self.state.global_tension, 3),
+            "pressures": self.state.pressures.to_trace(),
             "actors": {},
         }
         for name, actor in self.state.actors.items():
@@ -294,7 +415,7 @@ class SimulationEngine:
     def _display_header(self) -> None:
         console.rule(
             f"[bold blue]OSE — {self.state.scenario_name}[/bold blue]  "
-            f"[dim]doctrine: {self.doctrine_condition} | run: {self.run_id}[/dim]"
+            f"[dim]doctrine: {self.doctrine_condition} | run: {self.run_id} | seed: {self.seed}[/dim]"
         )
 
     def _display_turn_header(self, turn: int) -> None:

@@ -16,22 +16,20 @@ from __future__ import annotations
 
 import os
 import json
-import random
-import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
 import anthropic
 from dotenv import load_dotenv
 
-from world.state import Actor, WorldState, BilateralRelationship
+from world.state import Actor, WorldState
 from world.events import DecisionRecord
 from engine.actions import (
     BaseAction, ACTION_REGISTRY, parse_action_from_dict,
     get_available_actions_for,
 )
 from engine.validator import ActionValidator
+from engine.perception import build_perception_packet
 from actors.base import ActorInterface
 from actors.persona import build_persona_prompt
 
@@ -52,103 +50,6 @@ def _to_band(value: float) -> str:
         return "MEDIUM"
     else:
         return "LOW"
-
-
-def _to_band_with_noise(value: float, noise_scale: float) -> str:
-    """
-    Add Gaussian noise proportional to (1 - information_quality) before
-    converting to band. This is where Jervis's misperception thesis lives —
-    actors with poor intel see degraded, noisy assessments of adversaries.
-    """
-    if noise_scale > 0.0:
-        noise = random.gauss(0, noise_scale)
-        value = max(0.0, min(1.0, value + noise))
-    return _to_band(value)
-
-
-# ── Perception Filter ─────────────────────────────────────────────────────────
-
-def build_perception(actor: Actor, state: WorldState) -> Dict[str, Any]:
-    """
-    Build an actor-specific, noisy view of the world state.
-
-    - Own resources: seen accurately (noise_scale = 0)
-    - Ally resources: slight noise (noise_scale = 0.05)
-    - Adversary resources: noise proportional to (1 - information_quality)
-    - Neutral/competitor: medium noise (noise_scale = 0.15)
-
-    Returns a structured dict used to populate the decision prompt.
-    """
-    noise_base = 1.0 - actor.information_quality
-    allies = set(state.get_allies(actor.short_name))
-    adversaries = set(state.get_adversaries(actor.short_name))
-
-    perception: Dict[str, Any] = {
-        "self": _perceive_actor(state.actors[actor.short_name], noise_scale=0.0),
-        "others": {},
-        "relationships": [],
-        "systemic": {
-            "semiconductor_supply_chain": _to_band(state.systemic.semiconductor_supply_chain_integrity),
-            "global_shipping_disruption": _to_band(state.systemic.global_shipping_disruption),
-            "energy_market_volatility": _to_band(state.systemic.energy_market_volatility),
-            "alliance_system_cohesion": _to_band(state.systemic.alliance_system_cohesion),
-        },
-    }
-
-    for name, other in state.actors.items():
-        if name == actor.short_name:
-            continue
-        if name in allies:
-            noise = 0.05
-        elif name in adversaries:
-            noise = noise_base * 0.4
-        else:
-            noise = 0.15
-        perception["others"][name] = _perceive_actor(other, noise_scale=noise)
-
-    for rel in state.relationships:
-        if rel.from_actor == actor.short_name:
-            perception["relationships"].append({
-                "with": rel.to_actor,
-                "type": rel.relationship_type,
-                "trust": _to_band(rel.trust_score),
-                "alliance_strength": _to_band(rel.alliance_strength),
-                "threat_perception": _to_band(rel.threat_perception),
-                "deterrence_credibility": _to_band(rel.deterrence_credibility),
-            })
-
-    return perception
-
-
-def _perceive_actor(actor: Actor, noise_scale: float) -> Dict[str, str]:
-    """Convert an actor's resources to qualitative bands with optional noise."""
-    m = actor.military
-    e = actor.economic
-    p = actor.political
-
-    def b(val: float) -> str:
-        return _to_band_with_noise(val, noise_scale)
-
-    return {
-        "conventional_forces": b(m.conventional_forces),
-        "naval_power": b(m.naval_power),
-        "air_superiority": b(m.air_superiority),
-        "nuclear_capability": b(m.nuclear_capability),
-        "readiness": b(m.readiness),
-        "amphibious_capacity": b(m.amphibious_capacity),
-        "a2ad_effectiveness": b(m.a2ad_effectiveness),
-        "gdp_strength": b(e.gdp_strength),
-        "foreign_reserves": b(e.foreign_reserves),
-        "energy_independence": b(e.energy_independence),
-        "trade_openness": b(e.trade_openness),
-        "industrial_capacity": b(e.industrial_capacity),
-        "domestic_stability": b(p.domestic_stability),
-        "regime_legitimacy": b(p.regime_legitimacy),
-        "international_standing": b(p.international_standing),
-        "decision_unity": b(p.decision_unity),
-        "casualty_tolerance": b(p.casualty_tolerance),
-        "posture": actor.current_posture,
-    }
 
 
 # ── Decision Prompt Builder ───────────────────────────────────────────────────
@@ -202,9 +103,49 @@ def _format_relationships(perception: Dict[str, Any]) -> str:
         lines.append(
             f"  └ {name} military posture: {other['posture']} | "
             f"Forces: {other['conventional_forces']} | "
-            f"Readiness: {other['readiness']}"
+            f"Readiness: {other['readiness']} | "
+            f"Confidence: {other.get('assessment_confidence', 'MEDIUM')}"
         )
     return "\n".join(lines)
+
+
+def _format_pressure_summary(state: WorldState) -> str:
+    pressures = getattr(state, "pressures", None)
+    if pressures is None:
+        return "No structured scenario pressures tracked."
+    bands = pressures.as_bands()
+    return (
+        f"Military={bands['military_pressure']} | "
+        f"Diplomatic={bands['diplomatic_pressure']} | "
+        f"Alliance={bands['alliance_pressure']} | "
+        f"Domestic={bands['domestic_pressure']} | "
+        f"Economic={bands['economic_pressure']} | "
+        f"Informational={bands['informational_pressure']} | "
+        f"Instability={bands['crisis_instability']} | "
+        f"Uncertainty={bands['uncertainty']}"
+    )
+
+
+def _format_capability_summary(actor: Actor) -> str:
+    if actor.capabilities is None:
+        return "No structured capability profile available."
+    ordered = [
+        "local_naval_projection",
+        "local_air_projection",
+        "missile_a2ad_capability",
+        "cyber_capability",
+        "intelligence_quality",
+        "economic_coercion_capacity",
+        "alliance_leverage",
+        "logistics_endurance",
+        "domestic_stability",
+        "war_aversion",
+        "escalation_tolerance",
+        "bureaucratic_flexibility",
+        "signaling_credibility",
+    ]
+    bands = actor.capabilities.as_bands()
+    return " | ".join(f"{field}={bands[field]}" for field in ordered)
 
 
 def _format_available_actions(actor_id: str, state: WorldState) -> str:
@@ -230,6 +171,12 @@ def build_decision_prompt(
     events_block = "\n".join(f"- {e}" for e in recent_events) if recent_events else "No notable events this turn."
     available_block = _format_available_actions(actor.short_name, state)
     relationships_block = _format_relationships(perception)
+    pressure_summary = _format_pressure_summary(state)
+    capability_summary = _format_capability_summary(actor)
+    uncertainty_block = perception.get("uncertainty", {})
+    contradictory_signals = "\n".join(
+        f"- {item}" for item in uncertainty_block.get("contradictory_signals", [])
+    ) or "No major contradictory signals detected."
 
     prompt = template.format(
         turn=state.turn,
@@ -242,6 +189,10 @@ def build_decision_prompt(
         relationships_summary=relationships_block,
         recent_events=events_block,
         available_actions=available_block,
+        pressure_summary=pressure_summary,
+        capability_summary=capability_summary,
+        uncertainty_level=uncertainty_block.get("level", "MEDIUM"),
+        contradictory_signals=contradictory_signals,
     )
 
     if retry_feedback:
@@ -279,6 +230,18 @@ ACTION_TOOL = {
                 "type": "string",
                 "enum": ["low", "medium", "high"],
                 "description": "Intensity level of the action.",
+            },
+            "locality": {
+                "type": "string",
+                "description": "Optional theater locality or sub-zone (e.g., 'median_line', 'miyako_strait').",
+            },
+            "intent_annotation": {
+                "type": "string",
+                "description": "Optional short intent annotation for auditability.",
+            },
+            "communication_mode": {
+                "type": "string",
+                "description": "Optional signaling or communication mode (e.g., public_statement, private_channel).",
             },
             "rationale": {
                 "type": "string",
@@ -319,7 +282,9 @@ class LLMDecisionActor(ActorInterface):
         Returns (validated_action, decision_record).
         On persistent failure after retries, falls back to HoldPositionAction.
         """
-        perception = build_perception(self.actor, state)
+        state.ensure_derived_state()
+        self.actor = state.actors[self.actor.short_name]
+        perception, perception_metadata = build_perception_packet(self.actor, state)
         recent_events = self._extract_recent_events(state)
 
         decision_prompt = build_decision_prompt(
@@ -327,7 +292,7 @@ class LLMDecisionActor(ActorInterface):
         )
 
         action, record = self._call_with_retry(
-            state, perception, decision_prompt, recent_events
+            state, perception, perception_metadata, decision_prompt, recent_events
         )
         return action, record
 
@@ -335,6 +300,7 @@ class LLMDecisionActor(ActorInterface):
         self,
         state: WorldState,
         perception: Dict[str, Any],
+        perception_metadata: Dict[str, Any],
         initial_decision_prompt: str,
         recent_events: List[str],
     ) -> Tuple[BaseAction, DecisionRecord]:
@@ -447,6 +413,7 @@ class LLMDecisionActor(ActorInterface):
             run_id=self.run_id,
             system_prompt=self._persona_prompt,
             perception_block=json.dumps(perception, indent=2),
+            perception_metadata=perception_metadata,
             reasoning_trace=reasoning_trace,
             raw_llm_response=raw_response,
             parsed_action=parsed_action_dict,

@@ -1,275 +1,38 @@
 """
-Taiwan Strait Crisis 2026 — OSE Scenario Definition
+Taiwan Strait Crisis 2026 — open-ended scenario template.
 
-Four actors: USA, PRC, TWN (Taiwan), JPN (Japan)
-Starting phase: "tension" | Global tension: 0.55
-Contested zone: taiwan_strait
-
-IMPORTANT: All numerical values are ILLUSTRATIVE and do not represent
-real intelligence estimates. This is a research instrument for studying
-LLM decision-making behavior under doctrine conditions, not a forecast.
-
-Design rationale:
-  - PRC has HIGH amphibious capacity and HIGH A2/AD — it has the physical means
-    to threaten Taiwan but faces a sophisticated denial environment
-  - USA has HIGH naval and air power but LOW amphibious capacity in this theater —
-    it projects deterrence through presence, not invasion
-  - TWN has a "porcupine" posture: moderate forces but HIGH A2/AD relative to size
-  - JPN is the alliance linchpin: HIGH alliance strength with USA, geographic
-    chokepoint control via Miyako Strait, but constitutional constraints on action
-
-Event model:
-  Turn 0: PRC announces large-scale naval exercises near the Strait
-           (tension +0.06 — scripted ignition; every run starts here)
-  Turns 1+: Stochastic pool — each turn independently samples from
-           RANDOM_EVENT_POOL. Events are balanced ~50/50 escalatory /
-           de-escalatory so doctrine has room to make a measurable difference.
-           Each event has its own base_prob and optional tension condition.
+The scenario now evolves from state-dependent pressures and typed event
+templates rather than a narrowly scripted event pool. The world remains
+bounded: actors, capabilities, and event families are still explicitly
+constrained by the state and by deterministic eligibility rules.
 """
 from __future__ import annotations
 
-import random
 from typing import List, Optional, Dict, Any
 
+from engine.event_generation import CapabilityGate, EventTemplate, PressureGate
+from engine.scenario_template import OpenEndedScenarioTemplate
 from world.state import (
     WorldState, Actor, MilitaryResources, EconomicResources,
     PoliticalResources, TerritoryControl, BilateralRelationship,
     SystemicIndicators, RedLine,
 )
-from world.events import GlobalEvent
 from scenarios.base import ScenarioDefinition
 
 
-# ── Random Event Pool ─────────────────────────────────────────────────────────
-# Each entry: description, category, source, caused_by, affected, delta, base_prob,
-#             min_tension (only fire if tension >= threshold),
-#             max_tension (only fire if tension <= threshold)
-#
-# Pool is intentionally balanced: ~7 escalatory, ~6 de-escalatory, ~3 neutral/ambiguous
-# This ensures doctrine — not scenario scripting — drives outcomes.
-
 _ALL_ACTORS = ["USA", "PRC", "TWN", "JPN"]
 
-RANDOM_EVENT_POOL: List[Dict[str, Any]] = [
-    # ── Escalatory ────────────────────────────────────────────────────────────
-    {
-        "description": (
-            "PLAN warship enters Taiwan's 24-nautical-mile contiguous zone without "
-            "warning. TWN Coast Guard issues alert; US INDOPACOM increases watch level."
-        ),
-        "category": "military",
-        "caused_by": "PRC",
-        "affected": _ALL_ACTORS,
-        "delta": {"global_tension_delta": 0.05},
-        "base_prob": 0.20,
-        "min_tension": 0.45,
-        "max_tension": None,
-    },
-    {
-        "description": (
-            "PLA Rocket Force conducts ballistic missile test, with impact zones "
-            "north and south of Taiwan. US Strategic Command issues terse statement."
-        ),
-        "category": "military",
-        "caused_by": "PRC",
-        "affected": _ALL_ACTORS,
-        "delta": {"global_tension_delta": 0.07},
-        "base_prob": 0.12,
-        "min_tension": 0.55,
-        "max_tension": None,
-    },
-    {
-        "description": (
-            "PRC state media publishes editorial asserting reunification 'cannot wait "
-            "indefinitely' — widely read as a signal of leadership impatience."
-        ),
-        "category": "information",
-        "caused_by": "PRC",
-        "affected": ["USA", "TWN", "JPN"],
-        "delta": {"global_tension_delta": 0.04},
-        "base_prob": 0.22,
-        "min_tension": 0.40,
-        "max_tension": None,
-    },
-    {
-        "description": (
-            "US Navy carrier strike group (USS Ronald Reagan) transits Taiwan Strait "
-            "in a freedom-of-navigation operation. PRC lodges formal protest."
-        ),
-        "category": "military",
-        "caused_by": "USA",
-        "affected": _ALL_ACTORS,
-        "delta": {"global_tension_delta": 0.05},
-        "base_prob": 0.18,
-        "min_tension": 0.50,
-        "max_tension": None,
-    },
-    {
-        "description": (
-            "Suspected PRC cyber operation targets Taiwan power grid. Power disruptions "
-            "reported in northern Taiwan. Attribution not yet confirmed officially."
-        ),
-        "category": "information",
-        "caused_by": "PRC",
-        "affected": ["TWN", "USA"],
-        "delta": {"global_tension_delta": 0.04},
-        "base_prob": 0.15,
-        "min_tension": 0.45,
-        "max_tension": None,
-    },
-    {
-        "description": (
-            "US Congress passes the Taiwan Security Enhancement Act with bipartisan "
-            "majority, authorizing additional arms transfers to Taiwan."
-        ),
-        "category": "diplomatic",
-        "caused_by": "USA",
-        "affected": _ALL_ACTORS,
-        "delta": {"global_tension_delta": 0.04},
-        "base_prob": 0.15,
-        "min_tension": None,
-        "max_tension": None,
-    },
-    {
-        "description": (
-            "PRC deploys additional coast guard vessels to waters claimed by Taiwan. "
-            "Japan Self-Defense Forces raise ISR activity near Miyako Strait."
-        ),
-        "category": "military",
-        "caused_by": "PRC",
-        "affected": ["TWN", "JPN", "USA"],
-        "delta": {"global_tension_delta": 0.03},
-        "base_prob": 0.20,
-        "min_tension": 0.40,
-        "max_tension": None,
-    },
-
-    # ── De-escalatory ──────────────────────────────────────────────────────────
-    {
-        "description": (
-            "US and PRC senior officials hold unannounced back-channel call. "
-            "Both sides confirm 'frank exchange' — no joint statement issued."
-        ),
-        "category": "diplomatic",
-        "caused_by": None,
-        "affected": ["USA", "PRC"],
-        "delta": {"global_tension_delta": -0.04},
-        "base_prob": 0.18,
-        "min_tension": 0.45,
-        "max_tension": None,
-    },
-    {
-        "description": (
-            "PRC Ministry of National Defense confirms naval exercises have concluded "
-            "and participating vessels are returning to home ports."
-        ),
-        "category": "military",
-        "caused_by": "PRC",
-        "affected": _ALL_ACTORS,
-        "delta": {"global_tension_delta": -0.05},
-        "base_prob": 0.16,
-        "min_tension": None,
-        "max_tension": 0.70,
-    },
-    {
-        "description": (
-            "ASEAN foreign ministers issue joint statement calling for 'maximum "
-            "restraint' and reaffirming UNCLOS. Singapore offers to host talks."
-        ),
-        "category": "diplomatic",
-        "caused_by": None,
-        "affected": _ALL_ACTORS,
-        "delta": {"global_tension_delta": -0.03},
-        "base_prob": 0.20,
-        "min_tension": None,
-        "max_tension": None,
-    },
-    {
-        "description": (
-            "Taiwan's president signals openness to cross-strait economic dialogue "
-            "'without preconditions.' Statement welcomed by US State Department."
-        ),
-        "category": "diplomatic",
-        "caused_by": "TWN",
-        "affected": ["PRC", "USA"],
-        "delta": {"global_tension_delta": -0.04},
-        "base_prob": 0.14,
-        "min_tension": None,
-        "max_tension": 0.65,
-    },
-    {
-        "description": (
-            "G7 foreign ministers issue joint communiqué calling for 'peaceful "
-            "resolution consistent with the wishes of Taiwan's people.'"
-        ),
-        "category": "diplomatic",
-        "caused_by": None,
-        "affected": _ALL_ACTORS,
-        "delta": {"global_tension_delta": -0.03},
-        "base_prob": 0.16,
-        "min_tension": 0.50,
-        "max_tension": None,
-    },
-    {
-        "description": (
-            "US-PRC direct military-to-military hotline call confirmed by both "
-            "Pentagon and PLA Joint Staff Department. Crisis communication channel active."
-        ),
-        "category": "diplomatic",
-        "caused_by": None,
-        "affected": ["USA", "PRC"],
-        "delta": {"global_tension_delta": -0.03},
-        "base_prob": 0.15,
-        "min_tension": 0.50,
-        "max_tension": None,
-    },
-
-    # ── Neutral / Ambiguous ────────────────────────────────────────────────────
-    {
-        "description": (
-            "Magnitude 6.1 earthquake strikes eastern Taiwan. Domestic emergency "
-            "response mobilized. Cross-strait military activity temporarily reduced."
-        ),
-        "category": "natural",
-        "caused_by": None,
-        "affected": ["TWN"],
-        "delta": {"global_tension_delta": -0.02},
-        "base_prob": 0.06,
-        "min_tension": None,
-        "max_tension": None,
-    },
-    {
-        "description": (
-            "Global oil prices spike 12% on unrelated Middle East supply disruption. "
-            "All parties face increased economic pressure. Energy markets volatile."
-        ),
-        "category": "economic",
-        "caused_by": None,
-        "affected": _ALL_ACTORS,
-        "delta": {"global_tension_delta": 0.02},
-        "base_prob": 0.10,
-        "min_tension": None,
-        "max_tension": None,
-    },
-    {
-        "description": (
-            "International media coverage of the Taiwan Strait crisis intensifies. "
-            "Domestic political pressure mounts in all capitals for visible action."
-        ),
-        "category": "information",
-        "caused_by": None,
-        "affected": _ALL_ACTORS,
-        "delta": {"global_tension_delta": 0.02},
-        "base_prob": 0.18,
-        "min_tension": 0.50,
-        "max_tension": None,
-    },
-]
+def _pg(pressure: str, min_value: float, max_value: float = 1.0, weight: float = 1.0) -> PressureGate:
+    return PressureGate(pressure=pressure, min_value=min_value, max_value=max_value, weight=weight)
 
 
-class TaiwanStraitScenario(ScenarioDefinition):
+def _cg(actor: str, capability: str, min_value: float, weight: float = 1.0) -> CapabilityGate:
+    return CapabilityGate(actor=actor, capability=capability, min_value=min_value, weight=weight)
 
-    def initialize(self) -> WorldState:
+
+class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
+
+    def build_initial_state(self) -> WorldState:
         actors = {
             "USA": self._build_usa(),
             "PRC": self._build_prc(),
@@ -294,49 +57,448 @@ class TaiwanStraitScenario(ScenarioDefinition):
             max_turns=15,
         )
 
-    def get_turn_events(self, turn: int, state: WorldState) -> List[GlobalEvent]:
-        events = []
+    def initialize(self) -> WorldState:
+        return OpenEndedScenarioTemplate.initialize(self)
 
-        if turn == 0:
-            # Scripted ignition: every run begins with this flashpoint so actors
-            # have a concrete reason to make their first decision.
-            events.append(GlobalEvent(
-                turn=0,
+    def get_turn_events(self, turn: int, state: WorldState):
+        return OpenEndedScenarioTemplate.get_turn_events(self, turn, state)
+
+    def build_pressure_coefficients(self) -> Dict[str, Dict[str, float]]:
+        return {
+            "military_pressure": {
+                "global_tension": 0.30,
+                "military_heat": 0.25,
+                "theater_pressure": 0.20,
+                "recent_military": 0.15,
+                "uncertainty_burst": 0.10,
+            },
+            "diplomatic_pressure": {
+                "diplomatic_fragmentation": 0.30,
+                "alliance_strain": 0.20,
+                "recent_diplomatic": 0.20,
+                "uncertainty_burst": 0.10,
+                "global_tension": 0.20,
+            },
+            "alliance_pressure": {
+                "alliance_strain": 0.35,
+                "recent_military": 0.20,
+                "recent_diplomatic": 0.15,
+                "theater_pressure": 0.15,
+                "uncertainty_burst": 0.15,
+            },
+            "domestic_pressure": {
+                "domestic_fragility": 0.35,
+                "recent_military": 0.20,
+                "recent_information": 0.15,
+                "economic_stress": 0.15,
+                "global_tension": 0.15,
+            },
+            "economic_pressure": {
+                "economic_stress": 0.40,
+                "recent_economic": 0.25,
+                "alliance_strain": 0.15,
+                "global_tension": 0.20,
+            },
+            "information_pressure": {
+                "information_fog": 0.40,
+                "recent_information": 0.25,
+                "recent_ambiguity": 0.20,
+                "theater_pressure": 0.15,
+            },
+            "crisis_instability": {
+                "global_tension": 0.35,
+                "military_heat": 0.25,
+                "economic_stress": 0.15,
+                "alliance_strain": 0.15,
+                "uncertainty_burst": 0.10,
+            },
+            "uncertainty": {
+                "information_fog": 0.45,
+                "recent_ambiguity": 0.25,
+                "theater_pressure": 0.15,
+                "recent_information": 0.15,
+            },
+        }
+
+    def build_family_weights(self) -> Dict[str, float]:
+        return {
+            "gray_zone_incident": 1.10,
+            "military_signal": 1.00,
+            "diplomatic_signal": 1.00,
+            "domestic_shock": 0.95,
+            "alliance_coordination": 1.05,
+            "economic_disruption": 0.92,
+            "information_revelation": 1.00,
+            "neutral_disturbance": 0.85,
+        }
+
+    def build_scenario_context(self, state: WorldState, pressures) -> Dict[str, Any]:
+        return {
+            "theater": "taiwan_strait",
+            "base_event_budget": 1,
+            "scenario_bias": 0.03 if pressures.crisis_instability >= 0.5 else 0.0,
+        }
+
+    def max_events_per_turn(self) -> int:
+        return 3
+
+    def build_event_templates(self) -> List[EventTemplate]:
+        return [
+            EventTemplate(
+                event_id="prc_naval_probe",
+                family="gray_zone_incident",
                 category="military",
                 description=(
-                    "PRC Ministry of National Defense announces large-scale PLAN naval "
-                    "exercises in waters surrounding Taiwan, including live-fire drills. "
-                    "Exercise zone encompasses major shipping lanes. Duration: 72 hours."
+                    "PLAN warship enters Taiwan's contiguous zone without warning. "
+                    "TWN Coast Guard issues alert; US INDOPACOM raises watch level."
                 ),
-                source="injected",
                 caused_by_actor="PRC",
-                affected_actors=["USA", "PRC", "TWN", "JPN"],
-                world_state_delta={"global_tension_delta": 0.06},
-            ))
-        else:
-            # Stochastic events for turns 1+ — each event rolls independently.
-            # This is what creates genuine run-to-run variance and makes BCI meaningful.
-            for template in RANDOM_EVENT_POOL:
-                # Check tension preconditions
-                min_t: Optional[float] = template.get("min_tension")
-                max_t: Optional[float] = template.get("max_tension")
-                if min_t is not None and state.global_tension < min_t:
-                    continue
-                if max_t is not None and state.global_tension > max_t:
-                    continue
-
-                if random.random() < template["base_prob"]:
-                    events.append(GlobalEvent(
-                        turn=turn,
-                        category=template["category"],
-                        description=template["description"],
-                        source="injected",
-                        caused_by_actor=template.get("caused_by"),
-                        affected_actors=template["affected"],
-                        world_state_delta=template["delta"],
-                    ))
-
-        return events
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.20,
+                pressure_gates=[
+                    _pg("military_pressure", 0.35),
+                    _pg("crisis_instability", 0.25),
+                ],
+                capability_gates=[
+                    _cg("PRC", "local_naval_projection", 0.45),
+                    _cg("PRC", "signaling_credibility", 0.25),
+                ],
+                phase_bias=["tension", "crisis"],
+                recent_action_bias={"mobilize": 0.10, "signal_resolve": 0.08},
+                world_state_delta={"global_tension_delta": 0.05},
+            ),
+            EventTemplate(
+                event_id="prc_missile_test",
+                family="military_signal",
+                category="military",
+                description=(
+                    "PLA Rocket Force conducts ballistic missile test, with impact zones "
+                    "north and south of Taiwan. US Strategic Command issues a terse statement."
+                ),
+                caused_by_actor="PRC",
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.14,
+                pressure_gates=[
+                    _pg("military_pressure", 0.50),
+                    _pg("crisis_instability", 0.35),
+                ],
+                capability_gates=[
+                    _cg("PRC", "missile_a2ad", 0.65),
+                    _cg("PRC", "local_air_projection", 0.35),
+                ],
+                phase_bias=["tension", "crisis"],
+                recent_action_bias={"strike": 0.12, "mobilize": 0.10},
+                world_state_delta={"global_tension_delta": 0.07},
+            ),
+            EventTemplate(
+                event_id="prc_state_media_escalation",
+                family="information_revelation",
+                category="information",
+                description=(
+                    "PRC state media publishes an editorial asserting reunification "
+                    "'cannot wait indefinitely,' widely read as leadership impatience."
+                ),
+                caused_by_actor="PRC",
+                affected_actors=["USA", "TWN", "JPN"],
+                base_weight=0.18,
+                pressure_gates=[
+                    _pg("information_pressure", 0.30),
+                    _pg("military_pressure", 0.20),
+                ],
+                capability_gates=[
+                    _cg("PRC", "signaling_credibility", 0.20),
+                ],
+                phase_bias=["tension", "crisis"],
+                recent_action_bias={"propaganda": 0.14, "cyber_operation": 0.08},
+                world_state_delta={"global_tension_delta": 0.04},
+            ),
+            EventTemplate(
+                event_id="us_carrier_presence",
+                family="military_signal",
+                category="military",
+                description=(
+                    "US Navy carrier strike group transits the Taiwan Strait in a "
+                    "freedom-of-navigation operation. PRC lodges a formal protest."
+                ),
+                caused_by_actor="USA",
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.16,
+                pressure_gates=[
+                    _pg("alliance_pressure", 0.30),
+                    _pg("military_pressure", 0.30),
+                ],
+                capability_gates=[
+                    _cg("USA", "local_naval_projection", 0.55),
+                    _cg("USA", "signaling_credibility", 0.45),
+                ],
+                phase_bias=["tension", "crisis"],
+                recent_action_bias={"signal_resolve": 0.10, "mobilize": 0.08},
+                world_state_delta={"global_tension_delta": 0.05},
+            ),
+            EventTemplate(
+                event_id="prc_cyber_probe",
+                family="information_revelation",
+                category="information",
+                description=(
+                    "Suspected PRC cyber operation targets Taiwan power grid. "
+                    "Power disruptions are reported in northern Taiwan."
+                ),
+                caused_by_actor="PRC",
+                affected_actors=["TWN", "USA"],
+                base_weight=0.15,
+                pressure_gates=[
+                    _pg("information_pressure", 0.40),
+                    _pg("uncertainty", 0.35),
+                ],
+                capability_gates=[
+                    _cg("PRC", "cyber_capability", 0.45),
+                ],
+                phase_bias=["tension", "crisis"],
+                recent_action_bias={"cyber_operation": 0.12, "probe": 0.06},
+                world_state_delta={"global_tension_delta": 0.04},
+            ),
+            EventTemplate(
+                event_id="us_arms_transfer",
+                family="diplomatic_signal",
+                category="diplomatic",
+                description=(
+                    "US Congress authorizes additional arms transfers to Taiwan after "
+                    "an expedited committee review."
+                ),
+                caused_by_actor="USA",
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.13,
+                pressure_gates=[
+                    _pg("alliance_pressure", 0.35),
+                    _pg("domestic_pressure", 0.15),
+                ],
+                capability_gates=[
+                    _cg("USA", "alliance_leverage", 0.45),
+                    _cg("USA", "domestic_stability", 0.45),
+                ],
+                recent_action_bias={"condemn": 0.08, "signal_resolve": 0.10},
+                world_state_delta={"global_tension_delta": 0.04},
+            ),
+            EventTemplate(
+                event_id="back_channel",
+                family="diplomatic_signal",
+                category="diplomatic",
+                description=(
+                    "US and PRC senior officials hold an unannounced back-channel call. "
+                    "Both sides confirm a frank exchange with no joint statement."
+                ),
+                caused_by_actor=None,
+                affected_actors=["USA", "PRC"],
+                base_weight=0.18,
+                pressure_gates=[
+                    _pg("diplomatic_pressure", 0.30),
+                    _pg("uncertainty", 0.25),
+                ],
+                capability_gates=[
+                    _cg("USA", "signaling_credibility", 0.35),
+                    _cg("PRC", "signaling_credibility", 0.25),
+                ],
+                recent_action_bias={"negotiate": 0.15, "back_channel": 0.12},
+                world_state_delta={"global_tension_delta": -0.04},
+            ),
+            EventTemplate(
+                event_id="asean_restraint",
+                family="diplomatic_signal",
+                category="diplomatic",
+                description=(
+                    "ASEAN foreign ministers issue a joint statement calling for "
+                    "'maximum restraint' and reaffirming UNCLOS."
+                ),
+                caused_by_actor=None,
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.16,
+                pressure_gates=[
+                    _pg("diplomatic_pressure", 0.20),
+                    _pg("alliance_pressure", 0.20),
+                ],
+                recent_action_bias={"negotiate": 0.10, "intel_sharing": 0.08},
+                world_state_delta={"global_tension_delta": -0.03},
+            ),
+            EventTemplate(
+                event_id="g7_communique",
+                family="alliance_coordination",
+                category="diplomatic",
+                description=(
+                    "G7 foreign ministers issue a joint communiqué calling for a "
+                    "peaceful resolution consistent with the wishes of Taiwan's people."
+                ),
+                caused_by_actor=None,
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.11,
+                pressure_gates=[
+                    _pg("alliance_pressure", 0.25),
+                    _pg("domestic_pressure", 0.15),
+                ],
+                capability_gates=[
+                    _cg("USA", "alliance_leverage", 0.40),
+                ],
+                recent_action_bias={"intel_sharing": 0.08, "form_alliance": 0.10},
+                world_state_delta={"global_tension_delta": -0.03},
+            ),
+            EventTemplate(
+                event_id="twn_dialogue_signal",
+                family="diplomatic_signal",
+                category="diplomatic",
+                description=(
+                    "Taiwan's president signals openness to cross-strait economic dialogue "
+                    "without preconditions."
+                ),
+                caused_by_actor="TWN",
+                affected_actors=["PRC", "USA"],
+                base_weight=0.10,
+                pressure_gates=[
+                    _pg("diplomatic_pressure", 0.30),
+                    _pg("domestic_pressure", 0.25),
+                ],
+                capability_gates=[
+                    _cg("TWN", "signaling_credibility", 0.35),
+                ],
+                phase_bias=["tension"],
+                recent_action_bias={"negotiate": 0.12, "back_channel": 0.08},
+                world_state_delta={"global_tension_delta": -0.04},
+            ),
+            EventTemplate(
+                event_id="us_prc_hotline",
+                family="diplomatic_signal",
+                category="diplomatic",
+                description=(
+                    "US and PRC direct military-to-military hotline call is confirmed "
+                    "by both defense ministries."
+                ),
+                caused_by_actor=None,
+                affected_actors=["USA", "PRC"],
+                base_weight=0.16,
+                pressure_gates=[
+                    _pg("uncertainty", 0.35),
+                    _pg("diplomatic_pressure", 0.25),
+                ],
+                capability_gates=[
+                    _cg("USA", "signaling_credibility", 0.35),
+                    _cg("PRC", "signaling_credibility", 0.25),
+                ],
+                recent_action_bias={"negotiate": 0.12, "intel_sharing": 0.10},
+                world_state_delta={"global_tension_delta": -0.03},
+            ),
+            EventTemplate(
+                event_id="domestic_media_pressure",
+                family="domestic_shock",
+                category="information",
+                description=(
+                    "International media coverage of the Taiwan Strait crisis intensifies. "
+                    "Domestic political pressure mounts in all capitals for visible action."
+                ),
+                caused_by_actor=None,
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.18,
+                pressure_gates=[
+                    _pg("domestic_pressure", 0.35),
+                    _pg("information_pressure", 0.25),
+                ],
+                recent_action_bias={"propaganda": 0.12, "condemn": 0.10},
+                world_state_delta={"global_tension_delta": 0.02},
+            ),
+            EventTemplate(
+                event_id="oil_shock",
+                family="economic_disruption",
+                category="economic",
+                description=(
+                    "Global oil prices spike on an unrelated Middle East supply disruption. "
+                    "All parties face increased economic pressure."
+                ),
+                caused_by_actor=None,
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.10,
+                pressure_gates=[
+                    _pg("economic_pressure", 0.35),
+                    _pg("crisis_instability", 0.20),
+                ],
+                recent_action_bias={"embargo": 0.08, "technology_restriction": 0.06},
+                world_state_delta={"global_tension_delta": 0.02},
+            ),
+            EventTemplate(
+                event_id="earthquake_taiwan",
+                family="neutral_disturbance",
+                category="natural",
+                description=(
+                    "A magnitude 6.1 earthquake strikes eastern Taiwan. Domestic emergency "
+                    "response mobilized; cross-strait military activity temporarily slows."
+                ),
+                caused_by_actor=None,
+                affected_actors=["TWN"],
+                base_weight=0.07,
+                pressure_gates=[
+                    _pg("uncertainty", 0.10),
+                    _pg("domestic_pressure", 0.15),
+                ],
+                world_state_delta={"global_tension_delta": -0.02},
+            ),
+            EventTemplate(
+                event_id="intelligence_contradiction",
+                family="information_revelation",
+                category="information",
+                description=(
+                    "Competing intelligence assessments emerge about PRC posture. "
+                    "Some channels indicate restraint; others warn of coercive intent."
+                ),
+                caused_by_actor=None,
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.11,
+                pressure_gates=[
+                    _pg("uncertainty", 0.45),
+                    _pg("information_pressure", 0.30),
+                ],
+                recent_action_bias={"probe": 0.08, "cyber_operation": 0.08},
+                world_state_delta={"global_tension_delta": 0.01},
+            ),
+            EventTemplate(
+                event_id="exercise_wrapup",
+                family="military_signal",
+                category="military",
+                description=(
+                    "PRC confirms that major naval exercises are concluding and that "
+                    "participating vessels are returning to home ports."
+                ),
+                caused_by_actor="PRC",
+                affected_actors=_ALL_ACTORS,
+                base_weight=0.12,
+                pressure_gates=[
+                    _pg("military_pressure", 0.30),
+                    _pg("diplomatic_pressure", 0.15),
+                ],
+                capability_gates=[
+                    _cg("PRC", "local_naval_projection", 0.40),
+                ],
+                recent_action_bias={"withdraw": 0.10, "negotiate": 0.08},
+                world_state_delta={"global_tension_delta": -0.05},
+            ),
+            EventTemplate(
+                event_id="alliance_coordination",
+                family="alliance_coordination",
+                category="diplomatic",
+                description=(
+                    "Japan and the United States activate the alliance coordination "
+                    "mechanism to synchronize monitoring and messaging."
+                ),
+                caused_by_actor=None,
+                affected_actors=["USA", "JPN"],
+                base_weight=0.10,
+                pressure_gates=[
+                    _pg("alliance_pressure", 0.40),
+                    _pg("diplomatic_pressure", 0.20),
+                ],
+                capability_gates=[
+                    _cg("JPN", "alliance_leverage", 0.45),
+                    _cg("USA", "alliance_leverage", 0.45),
+                ],
+                recent_action_bias={"intel_sharing": 0.12, "signal_resolve": 0.08},
+                world_state_delta={"global_tension_delta": -0.02},
+            ),
+        ]
 
     # ── Actor Definitions ─────────────────────────────────────────────────────
 

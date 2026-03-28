@@ -11,6 +11,17 @@
 **Military posture:** {military_summary}
 **Economic standing:** {economic_summary}
 **Political standing:** {political_summary}
+**Capability profile:** {capability_summary}
+
+### Scenario Pressures
+
+{pressure_summary}
+
+### Uncertainty Environment
+
+**Uncertainty level:** {uncertainty_level}
+**Contradictory signals:**
+{contradictory_signals}
 
 ### Your Relationships
 

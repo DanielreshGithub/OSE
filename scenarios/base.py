@@ -1,21 +1,27 @@
 """
 ScenarioDefinition — abstract base class for all OSE scenarios.
 
-A scenario provides:
-  - initialize()         → WorldState (full initial state with actors + relationships)
-  - get_turn_events()    → List[GlobalEvent] (pre-scripted injected events per turn)
+The new scenario architecture keeps the same public engine contract:
+  - initialize()      -> WorldState
+  - get_turn_events() -> List[GlobalEvent]
 
-Scenarios do NOT contain actor logic or resolution rules.
-They are pure initial-condition + event-schedule definitions.
+Concrete scenarios may now implement open-ended, state-dependent event
+generation, but they still expose the same interface to the engine.
 """
 from __future__ import annotations
 from abc import ABC, abstractmethod
+import os
 from typing import List
 from world.state import WorldState
 from world.events import GlobalEvent
 
 
 class ScenarioDefinition(ABC):
+    def __init__(self, seed: int | None = None):
+        if seed is None:
+            raw_seed = os.getenv("OSE_SCENARIO_SEED")
+            seed = int(raw_seed) if raw_seed not in (None, "") else 0
+        self.seed = int(seed)
 
     @abstractmethod
     def initialize(self) -> WorldState:

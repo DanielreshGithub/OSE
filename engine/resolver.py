@@ -21,6 +21,7 @@ from typing import Dict, List, Tuple, Any
 
 from world.state import WorldState, Actor
 from world.events import GlobalEvent
+from engine.costs import compute_action_cost_breakdown
 from engine.actions import (
     BaseAction,
     MobilizeAction, StrikeAction, AdvanceAction, WithdrawAction,
@@ -42,6 +43,17 @@ def _scale(base: float, action: BaseAction) -> float:
 
 def _clamp(v: float) -> float:
     return max(0.0, min(1.0, v))
+
+
+def _costs_for(state: WorldState, actor: Actor, action: BaseAction):
+    state.ensure_derived_state()
+    actor = state.get_actor(actor.short_name) or actor
+    return compute_action_cost_breakdown(
+        action.action_type,
+        actor.capabilities,
+        state.pressures,
+        action.intensity,
+    )
 
 
 class TurnResolver:
@@ -90,16 +102,17 @@ class TurnResolver:
             # ── Military ─────────────────────────────────────────────────────
 
             if isinstance(action, MobilizeAction):
+                costs = _costs_for(state, actor, action)
                 gain = _scale(0.18, action)
                 actor.military.readiness = _clamp(actor.military.readiness + gain)
                 actor.military.logistics_capacity = _clamp(
-                    actor.military.logistics_capacity - _scale(0.04, action)
+                    actor.military.logistics_capacity - max(_scale(0.04, action), costs.military_cost * 0.5)
                 )
                 actor.economic.gdp_strength = _clamp(
-                    actor.economic.gdp_strength - action.economic_cost
+                    actor.economic.gdp_strength - costs.economic_cost
                 )
                 actor.current_posture = "escalatory"
-                tension_delta += _scale(0.04, action)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="military",
                     description=f"{actor_id} mobilizes forces (readiness +{gain:.2f}).",
@@ -111,6 +124,7 @@ class TurnResolver:
                 target = state.get_actor(action.target_actor)
                 if target is None:
                     continue
+                costs = _costs_for(state, actor, action)
 
                 pair = frozenset({actor_id, action.target_actor})
                 is_mutual = pair in mutual_strikes
@@ -135,12 +149,12 @@ class TurnResolver:
                 actor.military.conventional_forces = _clamp(
                     actor.military.conventional_forces - attrition
                 )
-                actor.military.readiness = _clamp(actor.military.readiness - action.military_cost)
+                actor.military.readiness = _clamp(actor.military.readiness - costs.military_cost)
                 actor.political.domestic_stability = _clamp(
-                    actor.political.domestic_stability - action.political_cost
+                    actor.political.domestic_stability - costs.political_cost
                 )
 
-                tension_delta += _scale(0.15, action)
+                tension_delta += costs.tension_impact
                 desc = (
                     f"{actor_id} strikes {action.target_actor} "
                     f"({'mutual' if is_mutual else 'vs defensive' if target_defensive else 'uncontested'}, "
@@ -153,6 +167,7 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, AdvanceAction) and action.target_zone:
+                costs = _costs_for(state, actor, action)
                 gain = _scale(0.12, action)
                 if action.target_zone not in actor.territory.contested_zones:
                     actor.territory.contested_zones[action.target_zone] = 0.0
@@ -160,9 +175,9 @@ class TurnResolver:
                     actor.territory.contested_zones[action.target_zone] + gain
                 )
                 actor.military.logistics_capacity = _clamp(
-                    actor.military.logistics_capacity - _scale(0.06, action)
+                    actor.military.logistics_capacity - max(_scale(0.06, action), costs.military_cost * 0.4)
                 )
-                tension_delta += _scale(0.06, action)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="military",
                     description=f"{actor_id} advances into {action.target_zone} (control +{gain:.2f}).",
@@ -171,9 +186,10 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, WithdrawAction):
-                actor.military.readiness = _clamp(actor.military.readiness - 0.08)
+                costs = _costs_for(state, actor, action)
+                actor.military.readiness = _clamp(actor.military.readiness - max(0.08, costs.military_cost))
                 actor.current_posture = "cautious"
-                tension_delta -= 0.04
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="military",
                     description=f"{actor_id} withdraws forces (de-escalatory signal).",
@@ -182,6 +198,7 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, BlockadeAction):
+                costs = _costs_for(state, actor, action)
                 target_id = action.target_actor or action.target_zone
                 if action.target_actor:
                     target = state.get_actor(action.target_actor)
@@ -192,7 +209,8 @@ class TurnResolver:
                 state.systemic.global_shipping_disruption = _clamp(
                     state.systemic.global_shipping_disruption + _scale(0.10, action)
                 )
-                tension_delta += _scale(0.08, action)
+                actor.economic.gdp_strength = _clamp(actor.economic.gdp_strength - costs.economic_cost)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="military",
                     description=f"{actor_id} enforces blockade against {target_id}.",
@@ -213,10 +231,11 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, ProbeAction):
+                costs = _costs_for(state, actor, action)
                 actor.information_quality = _clamp(
                     actor.information_quality + _scale(0.04, action)
                 )
-                tension_delta += _scale(0.02, action)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="military",
                     description=f"{actor_id} conducts probe operation (intel quality +{_scale(0.04, action):.2f}).",
@@ -225,9 +244,12 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, SignalResolveAction):
+                costs = _costs_for(state, actor, action)
                 for rel in state.relationships:
                     if rel.from_actor in state.get_allies(actor_id) and rel.to_actor == actor_id:
                         rel.deterrence_credibility = _clamp(rel.deterrence_credibility + 0.06)
+                actor.political.domestic_stability = _clamp(actor.political.domestic_stability - costs.political_cost)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="diplomatic",
                     description=f"{actor_id} signals resolve publicly.",
@@ -238,10 +260,12 @@ class TurnResolver:
             # ── Diplomatic ────────────────────────────────────────────────────
 
             elif isinstance(action, NegotiateAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
                 rel = state.get_relationship(actor_id, action.target_actor)
                 if rel:
                     rel.trust_score = _clamp(rel.trust_score + _scale(0.08, action))
-                tension_delta -= _scale(0.06, action)
+                actor.political.domestic_stability = _clamp(actor.political.domestic_stability - costs.political_cost)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="diplomatic",
                     description=f"{actor_id} opens negotiations with {action.target_actor}.",
@@ -250,6 +274,7 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, TargetedSanctionAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
                 target = state.get_actor(action.target_actor)
                 if target:
                     target.economic.gdp_strength = _clamp(
@@ -259,9 +284,10 @@ class TurnResolver:
                         target.political.international_standing - _scale(0.03, action)
                     )
                 actor.economic.trade_openness = _clamp(
-                    actor.economic.trade_openness - action.economic_cost
+                    actor.economic.trade_openness - costs.economic_cost
                 )
-                tension_delta += _scale(0.03, action)
+                actor.political.domestic_stability = _clamp(actor.political.domestic_stability - costs.political_cost)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="diplomatic",
                     description=(
@@ -273,6 +299,7 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, ComprehensiveSanctionAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
                 target = state.get_actor(action.target_actor)
                 if target:
                     target.economic.gdp_strength = _clamp(
@@ -285,12 +312,13 @@ class TurnResolver:
                         target.political.international_standing - _scale(0.06, action)
                     )
                 actor.economic.gdp_strength = _clamp(
-                    actor.economic.gdp_strength - action.economic_cost
+                    actor.economic.gdp_strength - costs.economic_cost
                 )
                 actor.economic.trade_openness = _clamp(
-                    actor.economic.trade_openness - 0.05
+                    actor.economic.trade_openness - max(0.05, costs.economic_cost * 0.5)
                 )
-                tension_delta += _scale(0.08, action)
+                actor.political.domestic_stability = _clamp(actor.political.domestic_stability - costs.political_cost)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="diplomatic",
                     description=(
@@ -302,6 +330,7 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, FormAllianceAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
                 rel = state.get_relationship(actor_id, action.target_actor)
                 if rel:
                     rel.relationship_type = "ally"
@@ -309,6 +338,8 @@ class TurnResolver:
                 state.systemic.alliance_system_cohesion = _clamp(
                     state.systemic.alliance_system_cohesion + 0.04
                 )
+                actor.political.domestic_stability = _clamp(actor.political.domestic_stability - costs.political_cost)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="diplomatic",
                     description=f"{actor_id} formalizes alliance with {action.target_actor}.",
@@ -317,11 +348,14 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, CondemnAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
                 target = state.get_actor(action.target_actor)
                 if target:
                     target.political.international_standing = _clamp(
                         target.political.international_standing - _scale(0.05, action)
                     )
+                actor.political.domestic_stability = _clamp(actor.political.domestic_stability - costs.political_cost)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="diplomatic",
                     description=f"{actor_id} publicly condemns {action.target_actor}.",
@@ -330,6 +364,7 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, IntelSharingAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
                 target = state.get_actor(action.target_actor)
                 if target:
                     target.information_quality = _clamp(
@@ -338,6 +373,8 @@ class TurnResolver:
                 rel = state.get_relationship(actor_id, action.target_actor)
                 if rel:
                     rel.trust_score = _clamp(rel.trust_score + 0.05)
+                actor.political.domestic_stability = _clamp(actor.political.domestic_stability - costs.political_cost)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="diplomatic",
                     description=f"{actor_id} shares intelligence with {action.target_actor}.",
@@ -346,10 +383,12 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, BackChannelAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
                 rel = state.get_relationship(actor_id, action.target_actor)
                 if rel:
                     rel.trust_score = _clamp(rel.trust_score + _scale(0.04, action))
-                tension_delta -= _scale(0.03, action)
+                actor.political.domestic_stability = _clamp(actor.political.domestic_stability - costs.political_cost)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="diplomatic",
                     description=f"{actor_id} opens back-channel with {action.target_actor}.",
@@ -360,6 +399,7 @@ class TurnResolver:
             # ── Economic ──────────────────────────────────────────────────────
 
             elif isinstance(action, EmbargoAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
                 target = state.get_actor(action.target_actor)
                 if target:
                     target.economic.trade_openness = _clamp(
@@ -369,12 +409,12 @@ class TurnResolver:
                         target.economic.gdp_strength - _scale(0.10, action)
                     )
                 actor.economic.gdp_strength = _clamp(
-                    actor.economic.gdp_strength - action.economic_cost
+                    actor.economic.gdp_strength - costs.economic_cost
                 )
                 state.systemic.global_shipping_disruption = _clamp(
                     state.systemic.global_shipping_disruption + 0.04
                 )
-                tension_delta += _scale(0.05, action)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="economic",
                     description=f"{actor_id} imposes embargo on {action.target_actor}.",
@@ -383,18 +423,21 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, ForeignAidAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
                 target = state.get_actor(action.target_actor)
                 if target:
                     target.economic.gdp_strength = _clamp(
                         target.economic.gdp_strength + _scale(0.05, action)
                     )
                 actor.economic.foreign_reserves = _clamp(
-                    actor.economic.foreign_reserves - action.economic_cost
+                    actor.economic.foreign_reserves - costs.economic_cost
                 )
                 rel = state.get_relationship(actor_id, action.target_actor)
                 if rel:
                     rel.trust_score = _clamp(rel.trust_score + 0.06)
                     rel.alliance_strength = _clamp(rel.alliance_strength + 0.04)
+                actor.political.domestic_stability = _clamp(actor.political.domestic_stability - costs.political_cost)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="economic",
                     description=f"{actor_id} provides foreign aid to {action.target_actor}.",
@@ -403,6 +446,7 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, CutSupplyAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
                 target = state.get_actor(action.target_actor)
                 if target:
                     target.economic.industrial_capacity = _clamp(
@@ -411,7 +455,8 @@ class TurnResolver:
                 state.systemic.semiconductor_supply_chain_integrity = _clamp(
                     state.systemic.semiconductor_supply_chain_integrity - _scale(0.05, action)
                 )
-                tension_delta += _scale(0.04, action)
+                actor.economic.gdp_strength = _clamp(actor.economic.gdp_strength - costs.economic_cost)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="economic",
                     description=f"{actor_id} cuts supply to {action.target_actor}.",
@@ -420,6 +465,7 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, TechnologyRestrictionAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
                 target = state.get_actor(action.target_actor)
                 if target:
                     target.economic.industrial_capacity = _clamp(
@@ -429,12 +475,12 @@ class TurnResolver:
                         target.military.readiness - _scale(0.04, action)
                     )
                 actor.economic.trade_openness = _clamp(
-                    actor.economic.trade_openness - action.economic_cost
+                    actor.economic.trade_openness - costs.economic_cost
                 )
                 state.systemic.semiconductor_supply_chain_integrity = _clamp(
                     state.systemic.semiconductor_supply_chain_integrity - _scale(0.08, action)
                 )
-                tension_delta += _scale(0.05, action)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="economic",
                     description=(
@@ -448,8 +494,9 @@ class TurnResolver:
             # ── Information / Cyber ───────────────────────────────────────────
 
             elif isinstance(action, PropagandaAction):
+                costs = _costs_for(state, actor, action)
                 actor.political.domestic_stability = _clamp(
-                    actor.political.domestic_stability + _scale(0.04, action)
+                    actor.political.domestic_stability + max(_scale(0.04, action) - costs.political_cost, 0.0)
                 )
                 if action.target_actor:
                     target = state.get_actor(action.target_actor)
@@ -457,6 +504,7 @@ class TurnResolver:
                         target.political.international_standing = _clamp(
                             target.political.international_standing - _scale(0.04, action)
                         )
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="information",
                     description=f"{actor_id} runs propaganda campaign.",
@@ -465,6 +513,7 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, PartialCoercionAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
                 target = state.get_actor(action.target_actor)
                 if target:
                     target.political.regime_legitimacy = _clamp(
@@ -473,7 +522,8 @@ class TurnResolver:
                     target.economic.gdp_strength = _clamp(
                         target.economic.gdp_strength - _scale(0.04, action)
                     )
-                tension_delta += _scale(0.06, action)
+                actor.political.domestic_stability = _clamp(actor.political.domestic_stability - costs.political_cost)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="military",
                     description=f"{actor_id} applies partial coercion against {action.target_actor}.",
@@ -482,6 +532,7 @@ class TurnResolver:
                 ))
 
             elif isinstance(action, CyberOperationAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
                 target = state.get_actor(action.target_actor)
                 if target:
                     target.economic.industrial_capacity = _clamp(
@@ -491,7 +542,8 @@ class TurnResolver:
                         target.information_quality - _scale(0.04, action)
                     )
                 # Low tension impact — cyber ops are deniable gray-zone
-                tension_delta += _scale(0.02, action)
+                actor.economic.gdp_strength = _clamp(actor.economic.gdp_strength - costs.economic_cost)
+                tension_delta += costs.tension_impact
                 events.append(GlobalEvent(
                     turn=state.turn, category="information",
                     description=(

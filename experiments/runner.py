@@ -19,6 +19,7 @@ Reduced pilot (4 × 5): ~$30–40.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -38,14 +39,20 @@ SCENARIO_REGISTRY = {
 }
 
 
-def _load_scenario(name: str):
+def _load_scenario(name: str, seed: int = 0):
     if name not in SCENARIO_REGISTRY:
         print(f"Unknown scenario: {name}")
         sys.exit(1)
     import importlib
     module_path, class_name = SCENARIO_REGISTRY[name].rsplit(".", 1)
     module = importlib.import_module(module_path)
-    return getattr(module, class_name)()
+    return getattr(module, class_name)(seed=seed)
+
+
+def _derive_run_seed(base_seed: int, doctrine: str, run_number: int) -> int:
+    payload = f"{base_seed}:{doctrine}:{run_number}".encode("utf-8")
+    digest = hashlib.sha256(payload).digest()
+    return int.from_bytes(digest[:8], "big") % (2**31)
 
 
 def run_single(
@@ -55,6 +62,7 @@ def run_single(
     max_turns: int,
     log_dir: str,
     experiment_id: str,
+    base_seed: int,
 ) -> Optional[str]:
     """
     Execute one simulation run. Returns the db_path on success, None on failure.
@@ -63,10 +71,11 @@ def run_single(
     from engine.loop import SimulationEngine
 
     run_id = f"{experiment_id}_{doctrine}_r{run_number:02d}"
+    run_seed = _derive_run_seed(base_seed, doctrine, run_number)
     print(f"\n  [{doctrine}] Run {run_number} — {run_id}")
 
     try:
-        scenario = _load_scenario(scenario_name)
+        scenario = _load_scenario(scenario_name, seed=run_seed)
         state = scenario.initialize()
 
         # Build actors
@@ -85,6 +94,8 @@ def run_single(
             actors=actors,
             doctrine_condition=doctrine,
             run_id=run_id,
+            run_number=run_number,
+            seed=run_seed,
             log_dir=log_dir,
             verbose=False,   # Quiet during batch runs
             scenario=scenario,
@@ -94,7 +105,7 @@ def run_single(
 
         db_path = str(Path(log_dir) / f"{run_id}.db")
         print(f"    ✓ {outcome} | tension={final_state.global_tension:.2f} "
-              f"| phase={final_state.crisis_phase} | log={run_id}.db")
+              f"| phase={final_state.crisis_phase} | seed={run_seed} | log={run_id}.db")
         return db_path
 
     except Exception as e:
@@ -152,6 +163,8 @@ def main():
                         help="Root log directory (default: logs/experiments)")
     parser.add_argument("--delay", type=float, default=2.0,
                         help="Seconds to wait between runs (rate limiting, default: 2)")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="Deterministic base seed for per-run derived seeds (default: 0)")
     parser.add_argument("--skip-scoring", action="store_true",
                         help="Skip DFS scoring after runs (run separately later)")
     parser.add_argument("--skip-bci", action="store_true",
@@ -177,6 +190,7 @@ def main():
     print(f"  Runs/cond:   {args.runs}")
     print(f"  Turns/run:   {args.turns}")
     print(f"  Total runs:  {total_runs}")
+    print(f"  Base seed:   {args.seed}")
     print(f"  Est. LLM calls: ~{est_calls} (decision) + ~{est_calls} (scoring)")
     print(f"  Log dir:     {log_dir}")
     print()
@@ -199,6 +213,7 @@ def main():
                 max_turns=args.turns,
                 log_dir=log_dir,
                 experiment_id=experiment_id,
+                base_seed=args.seed,
             )
             if db_path:
                 condition_db_map[condition].append(db_path)
@@ -207,6 +222,7 @@ def main():
                     "condition": condition,
                     "run_number": run_num,
                     "db_path": db_path,
+                    "seed": _derive_run_seed(args.seed, condition, run_num),
                     "success": True,
                 })
             else:
@@ -214,6 +230,7 @@ def main():
                     "condition": condition,
                     "run_number": run_num,
                     "db_path": None,
+                    "seed": _derive_run_seed(args.seed, condition, run_num),
                     "success": False,
                 })
 
@@ -275,6 +292,7 @@ def main():
         "runs_per_condition": args.runs,
         "turns_per_run": args.turns,
         "completed_at": datetime.utcnow().isoformat(),
+        "base_seed": args.seed,
         "run_results": run_results,
         "doctrine_fidelity_scores": condition_dfs,
         "behavioral_consistency_index": bci_results.get("summary", {}),

@@ -25,9 +25,15 @@ class GlobalEvent(BaseModel):
     turn: int
     category: EventCategory
     description: str
-    source: Literal["system", "actor", "cascade", "injected"]
+    source: Literal["system", "actor", "cascade", "injected", "generated"]
     caused_by_actor: Optional[str] = None   # short_name
     affected_actors: List[str] = Field(default_factory=list)
+    event_family: Optional[str] = None
+    eligibility_reasons: List[str] = Field(default_factory=list)
+    provenance: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured metadata explaining why this event was eligible and selected"
+    )
     world_state_delta: Dict[str, Any] = Field(
         default_factory=dict,
         description="Human-readable description of what changed"
@@ -46,6 +52,7 @@ class DecisionRecord(BaseModel):
     # Prompt inputs (stored for replay)
     system_prompt: str
     perception_block: str
+    perception_metadata: Dict[str, Any] = Field(default_factory=dict)
 
     # LLM outputs
     reasoning_trace: str          # Full chain-of-thought / rationale schema output
@@ -76,9 +83,15 @@ class TurnLog(BaseModel):
     doctrine_condition: str
     crisis_phase: str
     global_tension: float
+    pressure_before: Dict[str, Any] = Field(default_factory=dict)
+    pressure_after: Dict[str, Any] = Field(default_factory=dict)
     events_this_turn: List[GlobalEvent] = Field(default_factory=list)
     decisions: List[DecisionRecord] = Field(default_factory=list)
     cascade_events: List[GlobalEvent] = Field(default_factory=list)
+    event_generation_audit: List[Dict[str, Any]] = Field(default_factory=list)
+    perception_packets: Dict[str, Any] = Field(default_factory=dict)
+    state_mutations: List[Dict[str, Any]] = Field(default_factory=list)
+    terminal_checks: Dict[str, Any] = Field(default_factory=dict)
     world_state_snapshot: Dict[str, Any] = Field(
         default_factory=dict,
         description="JSON serialization of WorldState at turn end"
@@ -93,6 +106,7 @@ class RunRecord(BaseModel):
     scenario_name: str
     doctrine_condition: str
     run_number: int
+    seed: Optional[int] = None
     total_turns: int
     final_crisis_phase: str
     outcome_classification: Optional[str] = None   # deterrence_success | defense_success | frozen | failure

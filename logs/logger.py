@@ -23,7 +23,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -56,6 +55,7 @@ class StructuredLogger:
                 scenario_name   TEXT,
                 doctrine_condition TEXT,
                 run_number      INTEGER,
+                seed            INTEGER,
                 started_at      TEXT,
                 completed_at    TEXT,
                 completed       INTEGER DEFAULT 0,
@@ -73,6 +73,7 @@ class StructuredLogger:
                 doctrine_condition TEXT,
                 system_prompt   TEXT,
                 perception_block TEXT,
+                perception_metadata TEXT,
                 reasoning_trace TEXT,
                 raw_llm_response TEXT,
                 parsed_action   TEXT,
@@ -95,7 +96,13 @@ class StructuredLogger:
                 doctrine_condition TEXT,
                 crisis_phase    TEXT,
                 global_tension  REAL,
+                pressure_before TEXT,
+                pressure_after  TEXT,
                 terminal_condition_met TEXT,
+                event_generation_audit TEXT,
+                perception_packets TEXT,
+                state_mutations TEXT,
+                terminal_checks TEXT,
                 world_state_snapshot TEXT,
                 timestamp       TEXT
             );
@@ -109,11 +116,41 @@ class StructuredLogger:
                 source          TEXT,
                 caused_by_actor TEXT,
                 affected_actors TEXT,
+                event_family    TEXT,
+                eligibility_reasons TEXT,
+                provenance      TEXT,
                 world_state_delta TEXT,
                 timestamp       TEXT
             );
         """)
+        self._ensure_columns("runs", {
+            "seed": "INTEGER",
+        })
+        self._ensure_columns("decisions", {
+            "perception_metadata": "TEXT",
+        })
+        self._ensure_columns("turn_logs", {
+            "pressure_before": "TEXT",
+            "pressure_after": "TEXT",
+            "event_generation_audit": "TEXT",
+            "perception_packets": "TEXT",
+            "state_mutations": "TEXT",
+            "terminal_checks": "TEXT",
+        })
+        self._ensure_columns("events", {
+            "event_family": "TEXT",
+            "eligibility_reasons": "TEXT",
+            "provenance": "TEXT",
+        })
         self.conn.commit()
+
+    def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
+        cur = self.conn.cursor()
+        cur.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in cur.fetchall()}
+        for name, col_type in columns.items():
+            if name not in existing:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}")
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -121,13 +158,13 @@ class StructuredLogger:
         cur = self.conn.cursor()
         cur.execute("""
             INSERT OR REPLACE INTO runs
-            (run_id, scenario_name, doctrine_condition, run_number,
+            (run_id, scenario_name, doctrine_condition, run_number, seed,
              started_at, completed, total_turns, final_crisis_phase,
              final_global_tension, outcome_classification)
-            VALUES (?, ?, ?, ?, ?, 0, 0, '', 0.0, NULL)
+            VALUES (?, ?, ?, ?, ?, ?, 0, 0, '', 0.0, NULL)
         """, (
             record.run_id, record.scenario_name, record.doctrine_condition,
-            record.run_number, record.started_at.isoformat(),
+            record.run_number, record.seed, record.started_at.isoformat(),
         ))
         self.conn.commit()
 
@@ -136,15 +173,17 @@ class StructuredLogger:
         cur.execute("""
             INSERT OR REPLACE INTO decisions
             (id, run_id, turn, actor_short_name, doctrine_condition,
-             system_prompt, perception_block, reasoning_trace, raw_llm_response,
+             system_prompt, perception_block, perception_metadata,
+             reasoning_trace, raw_llm_response,
              parsed_action, validation_result, validation_errors, retry_count,
              final_applied, crisis_phase_at_decision,
              doctrine_language_score, doctrine_logic_score,
              doctrine_consistent_decision, contamination_flag, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             record.id, record.run_id, record.turn, record.actor_short_name,
             record.doctrine_condition, record.system_prompt, record.perception_block,
+            json.dumps(record.perception_metadata),
             record.reasoning_trace, record.raw_llm_response,
             json.dumps(record.parsed_action) if record.parsed_action else None,
             record.validation_result,
@@ -163,12 +202,20 @@ class StructuredLogger:
         cur.execute("""
             INSERT INTO turn_logs
             (run_id, turn, doctrine_condition, crisis_phase, global_tension,
-             terminal_condition_met, world_state_snapshot, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             pressure_before, pressure_after, terminal_condition_met,
+             event_generation_audit, perception_packets, state_mutations,
+             terminal_checks, world_state_snapshot, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             turn_log.run_id, turn_log.turn, turn_log.doctrine_condition,
             turn_log.crisis_phase, turn_log.global_tension,
+            json.dumps(turn_log.pressure_before),
+            json.dumps(turn_log.pressure_after),
             turn_log.terminal_condition_met,
+            json.dumps(turn_log.event_generation_audit),
+            json.dumps(turn_log.perception_packets),
+            json.dumps(turn_log.state_mutations),
+            json.dumps(turn_log.terminal_checks),
             json.dumps(turn_log.world_state_snapshot),
             turn_log.timestamp.isoformat(),
         ))
@@ -179,12 +226,16 @@ class StructuredLogger:
         cur.execute("""
             INSERT OR REPLACE INTO events
             (id, run_id, turn, category, description, source, caused_by_actor,
-             affected_actors, world_state_delta, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             affected_actors, event_family, eligibility_reasons, provenance,
+             world_state_delta, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             event.id, run_id, event.turn, event.category, event.description,
             event.source, event.caused_by_actor,
             json.dumps(event.affected_actors),
+            event.event_family,
+            json.dumps(event.eligibility_reasons),
+            json.dumps(event.provenance),
             json.dumps(event.world_state_delta),
             event.timestamp.isoformat(),
         ))

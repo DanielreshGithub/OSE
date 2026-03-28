@@ -26,7 +26,7 @@ SCENARIO_REGISTRY = {
 VALID_DOCTRINES = ["realist", "liberal", "org_process", "baseline"]
 
 
-def load_scenario(name: str):
+def load_scenario(name: str, seed: int = 0):
     """Dynamically import and instantiate a scenario class."""
     if name not in SCENARIO_REGISTRY:
         print(f"Unknown scenario '{name}'. Available: {list(SCENARIO_REGISTRY.keys())}")
@@ -34,7 +34,7 @@ def load_scenario(name: str):
     module_path, class_name = SCENARIO_REGISTRY[name].rsplit(".", 1)
     import importlib
     module = importlib.import_module(module_path)
-    return getattr(module, class_name)()
+    return getattr(module, class_name)(seed=seed)
 
 
 def main():
@@ -72,6 +72,10 @@ Doctrine conditions:
         help="Run ID override (default: auto-generated)",
     )
     parser.add_argument(
+        "--seed", type=int, default=0,
+        help="Deterministic seed for scenario evolution and perception (default: 0)",
+    )
+    parser.add_argument(
         "--quiet", action="store_true",
         help="Suppress Rich terminal display",
     )
@@ -86,7 +90,7 @@ Doctrine conditions:
     run_id = args.run_id or f"{args.scenario}_{args.doctrine}_{str(uuid.uuid4())[:6]}"
 
     # Load scenario
-    scenario = load_scenario(args.scenario)
+    scenario = load_scenario(args.scenario, seed=args.seed)
     state = scenario.initialize()
 
     # Build LLM actors
@@ -106,6 +110,8 @@ Doctrine conditions:
         actors=actors,
         doctrine_condition=args.doctrine,
         run_id=run_id,
+        run_number=1,
+        seed=args.seed,
         log_dir=args.log_dir,
         verbose=not args.quiet,
         scenario=scenario,
@@ -115,6 +121,7 @@ Doctrine conditions:
 
     print(f"\nRun complete: {run_id}")
     print(f"Outcome: {outcome}")
+    print(f"Seed: {args.seed}")
     print(f"Log: {args.log_dir}/{run_id}.db")
     print(f"\nQuery decisions:")
     print(f'  sqlite3 {args.log_dir}/{run_id}.db "SELECT actor_short_name, action_type, validation_result FROM decisions ORDER BY turn, actor_short_name;"')

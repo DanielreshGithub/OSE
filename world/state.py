@@ -13,6 +13,9 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 import uuid
 
+from world.capabilities import CapabilityVector
+from world.pressures import PressureState, empty_pressure_state
+
 
 # ── Resource Models ──────────────────────────────────────────────────────────
 
@@ -118,6 +121,7 @@ class Actor(BaseModel):
         default=0.75, ge=0.0, le=1.0,
         description="Accuracy of this actor's intelligence. Controls perception filter noise."
     )
+    capabilities: Optional[CapabilityVector] = None
     perceived_threats: Dict[str, float] = Field(
         default_factory=dict,
         description="short_name -> threat level (0-1) as perceived by this actor"
@@ -162,10 +166,12 @@ class WorldState(BaseModel):
     actors: Dict[str, Actor]                    # short_name -> Actor
     relationships: List[BilateralRelationship]
     systemic: SystemicIndicators
+    pressures: PressureState = Field(default_factory=empty_pressure_state)
 
     global_tension: float = Field(ge=0.0, le=1.0, description="Aggregate system tension")
     active_conflicts: List[str] = Field(default_factory=list, description="Active conflict zone IDs")
     crisis_phase: CrisisPhase = "peacetime"
+    random_seed: int = 0
 
     # History — typed as Any to avoid circular import with world/events.py
     # At runtime these hold List[TurnLog] and List[DecisionRecord] respectively
@@ -208,11 +214,27 @@ class WorldState(BaseModel):
         """
         for actor in self.actors.values():
             for resource_group in [actor.military, actor.economic, actor.political]:
-                for field_name in resource_group.model_fields:
+                for field_name in resource_group.__class__.model_fields:
                     val = getattr(resource_group, field_name)
                     if isinstance(val, float):
                         setattr(resource_group, field_name, max(0.0, min(1.0, val)))
+            if actor.capabilities is not None:
+                actor.capabilities.clamp()
         self.global_tension = max(0.0, min(1.0, self.global_tension))
+        self.pressures.clamp()
         return self
+
+    def ensure_derived_state(self) -> "WorldState":
+        """
+        Populate any additive derived state required by the open-ended engine.
+        """
+        from engine.capabilities import build_actor_capabilities
+
+        for actor in self.actors.values():
+            actor.capabilities = build_actor_capabilities(actor, self)
+        if not self.pressures.scenario_id:
+            self.pressures.scenario_id = self.scenario_id
+        self.pressures.turn = self.turn
+        return self.clamp_all_resources()
 
     model_config = {"arbitrary_types_allowed": True}

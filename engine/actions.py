@@ -26,6 +26,8 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, Literal, Tuple, TYPE_CHECKING
 from pydantic import BaseModel, Field
 
+from engine.capabilities import evaluate_action_constraints
+
 if TYPE_CHECKING:
     from world.state import WorldState
 
@@ -38,6 +40,9 @@ class BaseAction(BaseModel, ABC):
     target_actor: Optional[str] = None  # short_name
     target_zone: Optional[str] = None
     intensity: Literal["low", "medium", "high"] = "medium"
+    locality: Optional[str] = None
+    intent_annotation: Optional[str] = None
+    communication_mode: Optional[str] = None
     rationale: str = ""                  # LLM-provided justification (for logging)
 
     military_cost: float = 0.0
@@ -57,6 +62,21 @@ class BaseAction(BaseModel, ABC):
     model_config = {"arbitrary_types_allowed": True}
 
 
+def _capability_errors(action: BaseAction, state: "WorldState") -> List[str]:
+    actor = state.get_actor(action.actor_id)
+    if actor is None:
+        return [f"Actor '{action.actor_id}' not found in world state."]
+    if actor.capabilities is None:
+        state.ensure_derived_state()
+        actor = state.get_actor(action.actor_id)
+    if actor is None or actor.capabilities is None:
+        return ["Actor capability profile unavailable."]
+
+    result = evaluate_action_constraints(action.action_type, actor.capabilities, state.pressures)
+    errors = list(result.reasons)
+    return errors
+
+
 # ── Military Actions (8) ──────────────────────────────────────────────────────
 
 class MobilizeAction(BaseAction):
@@ -65,7 +85,7 @@ class MobilizeAction(BaseAction):
     economic_cost: float = 0.05
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -90,7 +110,7 @@ class StrikeAction(BaseAction):
     political_cost: float = 0.15
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -121,7 +141,7 @@ class AdvanceAction(BaseAction):
     military_cost: float = 0.15
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -147,7 +167,7 @@ class WithdrawAction(BaseAction):
     military_cost: float = 0.05
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -167,7 +187,7 @@ class BlockadeAction(BaseAction):
     economic_cost: float = 0.05
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -191,7 +211,7 @@ class DefensivePostureAction(BaseAction):
     military_cost: float = 0.05
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -210,7 +230,7 @@ class ProbeAction(BaseAction):
     military_cost: float = 0.05
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -234,7 +254,7 @@ class SignalResolveAction(BaseAction):
     political_cost: float = 0.02
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -254,7 +274,7 @@ class NegotiateAction(BaseAction):
     political_cost: float = 0.05
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -284,7 +304,7 @@ class TargetedSanctionAction(BaseAction):
     political_cost: float = 0.03
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -313,7 +333,7 @@ class ComprehensiveSanctionAction(BaseAction):
     political_cost: float = 0.08
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -341,7 +361,7 @@ class FormAllianceAction(BaseAction):
     political_cost: float = 0.10
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -367,7 +387,7 @@ class CondemnAction(BaseAction):
     political_cost: float = 0.02
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -389,7 +409,7 @@ class IntelSharingAction(BaseAction):
     political_cost: float = 0.03
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -417,7 +437,7 @@ class BackChannelAction(BaseAction):
     political_cost: float = 0.02
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -441,7 +461,7 @@ class EmbargoAction(BaseAction):
     economic_cost: float = 0.08
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -464,7 +484,7 @@ class ForeignAidAction(BaseAction):
     economic_cost: float = 0.05
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -488,7 +508,7 @@ class CutSupplyAction(BaseAction):
     economic_cost: float = 0.04
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -518,7 +538,7 @@ class TechnologyRestrictionAction(BaseAction):
     political_cost: float = 0.04
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -550,7 +570,7 @@ class HoldPositionAction(BaseAction):
     action_type: str = "hold_position"
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -567,7 +587,7 @@ class MonitorAction(BaseAction):
     action_type: str = "monitor"
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -587,7 +607,7 @@ class PropagandaAction(BaseAction):
     political_cost: float = 0.03
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -607,7 +627,7 @@ class PartialCoercionAction(BaseAction):
     military_cost: float = 0.03
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -638,7 +658,7 @@ class CyberOperationAction(BaseAction):
     political_cost: float = 0.03
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -676,7 +696,7 @@ class NuclearSignalAction(BaseAction):
     political_cost: float = 0.12
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
-        errors = []
+        errors = _capability_errors(self, state)
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -760,6 +780,7 @@ def get_available_actions_for(actor_id: str, state: "WorldState") -> List[str]:
     availability. The sentinel won't match any real actor, so relationship-based
     checks (e.g. "can't strike allies") correctly skip rather than false-trigger.
     """
+    state.ensure_derived_state()
     _SENTINEL = "__availability_check__"
     available = []
     for action_type, action_class in ACTION_REGISTRY.items():

@@ -33,6 +33,7 @@ from world.state import WorldState
 from world.events import GlobalEvent
 from engine.actions import (
     BaseAction, StrikeAction, MobilizeAction, BlockadeAction, EmbargoAction,
+    TechnologyRestrictionAction,
     NegotiateAction, BackChannelAction, ForeignAidAction, IntelSharingAction, FormAllianceAction,
 )
 
@@ -209,19 +210,19 @@ class CascadeDetector:
         events = []
         blockade_count = sum(1 for a in actions.values() if isinstance(a, BlockadeAction))
         embargo_count = sum(1 for a in actions.values() if isinstance(a, EmbargoAction))
+        tech_restriction_count = sum(1 for a in actions.values() if isinstance(a, TechnologyRestrictionAction))
 
-        # Taiwan Strait disruption: any blockade or embargo degrades semiconductor supply
-        if blockade_count > 0 or embargo_count > 0:
-            degradation = (blockade_count * 0.06) + (embargo_count * 0.03)
+        if blockade_count > 0 or embargo_count > 0 or tech_restriction_count > 0:
+            degradation = (blockade_count * 0.06) + (embargo_count * 0.03) + (tech_restriction_count * 0.04)
             old = state.systemic.semiconductor_supply_chain_integrity
             state.systemic.semiconductor_supply_chain_integrity = _clamp(old - degradation)
             events.append(GlobalEvent(
                 turn=state.turn, category="cascade",
                 description=(
                     f"[CASCADE] Economic coercion ({blockade_count} blockade(s), "
-                    f"{embargo_count} embargo(s)) → semiconductor supply chain "
-                    f"integrity degrades ({old:.2f} → "
-                    f"{state.systemic.semiconductor_supply_chain_integrity:.2f})."
+                    f"{embargo_count} embargo(s), {tech_restriction_count} tech restriction(s)) "
+                    f"→ semiconductor supply chain integrity degrades "
+                    f"({old:.2f} → {state.systemic.semiconductor_supply_chain_integrity:.2f})."
                 ),
                 source="cascade",
                 affected_actors=list(state.actors.keys()),
