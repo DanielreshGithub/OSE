@@ -1,13 +1,15 @@
 """
-OSE Action Space — 24 typed action classes + registry + parser.
+OSE Action Space — 32 typed action classes + registry + parser.
 
 Categories:
-  Military (8):    mobilize, strike, advance, withdraw, blockade,
-                   defensive_posture, probe, signal_resolve
-  Diplomatic (6):  negotiate, targeted_sanction, comprehensive_sanction,
-                   form_alliance, condemn, intel_sharing, back_channel
-  Economic (4):    embargo, foreign_aid, cut_supply, technology_restriction
-  Information (3): propaganda, partial_coercion, cyber_operation
+  Military (9):    mobilize, strike, advance, withdraw, blockade,
+                   defensive_posture, probe, signal_resolve, deploy_forward
+  Diplomatic (10): negotiate, targeted_sanction, comprehensive_sanction,
+                   form_alliance, condemn, intel_sharing, back_channel,
+                   lawfare_filing, multilateral_appeal, expel_diplomats
+  Economic (6):    embargo, foreign_aid, cut_supply, technology_restriction,
+                   asset_freeze, supply_chain_diversion
+  Information (4): propaganda, partial_coercion, cyber_operation, hack_and_leak
   Nuclear (1):     nuclear_signal
   Inaction (2):    hold_position, monitor
 
@@ -267,7 +269,35 @@ class SignalResolveAction(BaseAction):
         }
 
 
-# ── Diplomatic Actions (6) ────────────────────────────────────────────────────
+class DeployForwardAction(BaseAction):
+    action_type: str = "deploy_forward"
+    military_cost: float = 0.12
+    political_cost: float = 0.04
+
+    def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
+        errors = _capability_errors(self, state)
+        actor = state.get_actor(self.actor_id)
+        if actor is None:
+            errors.append(f"Actor '{self.actor_id}' not found in world state.")
+            return False, errors
+        if self.target_zone is None and self.locality is None:
+            errors.append("DeployForward requires target_zone or locality.")
+        if actor.military.logistics_capacity < 0.35:
+            errors.append("Logistics capacity too low (< 0.35) to sustain forward deployment.")
+        if actor.military.readiness < 0.30:
+            errors.append("Readiness too low (< 0.30) to deploy forward credibly.")
+        return len(errors) == 0, errors
+
+    def get_expected_effects(self) -> Dict[str, str]:
+        return {
+            "military.readiness": "+0.06 to +0.12 (visible forward presence)",
+            "military.logistics_capacity": "-0.04 to -0.10 (theater sustainment burden)",
+            "relationships.deterrence_credibility": "+0.04 to +0.08",
+            "global_tension": "+0.04 to +0.09",
+        }
+
+
+# ── Diplomatic Actions (10) ───────────────────────────────────────────────────
 
 class NegotiateAction(BaseAction):
     action_type: str = "negotiate"
@@ -454,7 +484,78 @@ class BackChannelAction(BaseAction):
         }
 
 
-# ── Economic Actions (3) ──────────────────────────────────────────────────────
+class LawfareFilingAction(BaseAction):
+    action_type: str = "lawfare_filing"
+    political_cost: float = 0.03
+
+    def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
+        errors = _capability_errors(self, state)
+        actor = state.get_actor(self.actor_id)
+        if actor is None:
+            errors.append(f"Actor '{self.actor_id}' not found in world state.")
+            return False, errors
+        if self.target_actor is None and self.target_zone is None:
+            errors.append("LawfareFiling requires target_actor or target_zone.")
+        if actor.political.international_standing < 0.20:
+            errors.append("International standing too low (< 0.20) to file credible legal challenge.")
+        return len(errors) == 0, errors
+
+    def get_expected_effects(self) -> Dict[str, str]:
+        return {
+            "actor.political.international_standing": "+0.02 to +0.05",
+            "target.political.international_standing": "-0.02 to -0.06",
+            "global_tension": "-0.01 to +0.02",
+            "signal": "Legal contestation reframes the dispute without kinetic escalation",
+        }
+
+
+class MultilateralAppealAction(BaseAction):
+    action_type: str = "multilateral_appeal"
+    political_cost: float = 0.03
+
+    def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
+        errors = _capability_errors(self, state)
+        actor = state.get_actor(self.actor_id)
+        if actor is None:
+            errors.append(f"Actor '{self.actor_id}' not found in world state.")
+            return False, errors
+        if actor.political.international_standing < 0.25:
+            errors.append("International standing too low (< 0.25) to rally multilateral support.")
+        return len(errors) == 0, errors
+
+    def get_expected_effects(self) -> Dict[str, str]:
+        return {
+            "actor.political.international_standing": "+0.03 to +0.06",
+            "systemic.alliance_system_cohesion": "+0.02 to +0.05",
+            "global_tension": "-0.01 to -0.04",
+            "signal": "Seeks external legitimacy and coalition signaling",
+        }
+
+
+class ExpelDiplomatsAction(BaseAction):
+    action_type: str = "expel_diplomats"
+    political_cost: float = 0.05
+
+    def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
+        errors = _capability_errors(self, state)
+        actor = state.get_actor(self.actor_id)
+        if actor is None:
+            errors.append(f"Actor '{self.actor_id}' not found in world state.")
+            return False, errors
+        if self.target_actor is None:
+            errors.append("ExpelDiplomats requires target_actor.")
+        return len(errors) == 0, errors
+
+    def get_expected_effects(self) -> Dict[str, str]:
+        return {
+            "relationships.trust_score": "-0.06 to -0.12",
+            "target.political.international_standing": "-0.02 to -0.05",
+            "global_tension": "+0.02 to +0.06",
+            "signal": "Formal diplomatic rupture short of military escalation",
+        }
+
+
+# ── Economic Actions (6) ──────────────────────────────────────────────────────
 
 class EmbargoAction(BaseAction):
     action_type: str = "embargo"
@@ -562,6 +663,58 @@ class TechnologyRestrictionAction(BaseAction):
         }
 
 
+class AssetFreezeAction(BaseAction):
+    action_type: str = "asset_freeze"
+    economic_cost: float = 0.04
+    political_cost: float = 0.03
+
+    def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
+        errors = _capability_errors(self, state)
+        actor = state.get_actor(self.actor_id)
+        if actor is None:
+            errors.append(f"Actor '{self.actor_id}' not found in world state.")
+            return False, errors
+        if self.target_actor is None:
+            errors.append("AssetFreeze requires target_actor.")
+        if actor.economic.foreign_reserves < 0.20:
+            errors.append("Foreign reserves too low (< 0.20) to sustain financial retaliation risk.")
+        return len(errors) == 0, errors
+
+    def get_expected_effects(self) -> Dict[str, str]:
+        return {
+            "target.economic.foreign_reserves": "-0.08 to -0.18",
+            "target.economic.gdp_strength": "-0.03 to -0.08",
+            "global_tension": "+0.03 to +0.06",
+            "signal": "Financial coercion targeting liquidity and offshore holdings",
+        }
+
+
+class SupplyChainDiversionAction(BaseAction):
+    action_type: str = "supply_chain_diversion"
+    economic_cost: float = 0.05
+    political_cost: float = 0.02
+
+    def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
+        errors = _capability_errors(self, state)
+        actor = state.get_actor(self.actor_id)
+        if actor is None:
+            errors.append(f"Actor '{self.actor_id}' not found in world state.")
+            return False, errors
+        if actor.economic.industrial_capacity < 0.30:
+            errors.append("Industrial capacity too low (< 0.30) to redirect supply chains.")
+        if actor.economic.trade_openness < 0.20:
+            errors.append("Trade openness too low (< 0.20) for supply chain diversion to matter.")
+        return len(errors) == 0, errors
+
+    def get_expected_effects(self) -> Dict[str, str]:
+        return {
+            "actor.economic.industrial_capacity": "+0.03 to +0.08",
+            "actor.economic.semiconductor_dependency": "-0.04 to -0.10",
+            "systemic.semiconductor_supply_chain_integrity": "+0.02 to +0.05",
+            "signal": "Reorients production and sourcing toward preferred networks",
+        }
+
+
 # ── Inaction Actions (2) ──────────────────────────────────────────────────────
 # Collapsed from 4 to 2 — delay_commitment and wait_and_observe were semantically
 # indistinguishable from hold_position and added noise to BCI measurement.
@@ -600,7 +753,7 @@ class MonitorAction(BaseAction):
         }
 
 
-# ── Information / Cyber Actions (3) ──────────────────────────────────────────
+# ── Information / Cyber Actions (4) ──────────────────────────────────────────
 
 class PropagandaAction(BaseAction):
     action_type: str = "propaganda"
@@ -680,6 +833,32 @@ class CyberOperationAction(BaseAction):
         }
 
 
+class HackAndLeakAction(BaseAction):
+    action_type: str = "hack_and_leak"
+    political_cost: float = 0.04
+    economic_cost: float = 0.02
+
+    def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
+        errors = _capability_errors(self, state)
+        actor = state.get_actor(self.actor_id)
+        if actor is None:
+            errors.append(f"Actor '{self.actor_id}' not found in world state.")
+            return False, errors
+        if self.target_actor is None:
+            errors.append("HackAndLeak requires target_actor.")
+        if actor.information_quality < 0.45:
+            errors.append("Information quality too low (< 0.45) to execute credible hack-and-leak operation.")
+        return len(errors) == 0, errors
+
+    def get_expected_effects(self) -> Dict[str, str]:
+        return {
+            "target.political.regime_legitimacy": "-0.05 to -0.12",
+            "target.political.domestic_stability": "-0.03 to -0.08",
+            "global_tension": "+0.02 to +0.06",
+            "signal": "Information exposure operation that weakens adversary legitimacy",
+        }
+
+
 # ── Nuclear Actions (1) ───────────────────────────────────────────────────────
 
 class NuclearSignalAction(BaseAction):
@@ -721,7 +900,7 @@ class NuclearSignalAction(BaseAction):
 # ── Registry + Parser ─────────────────────────────────────────────────────────
 
 ACTION_REGISTRY: Dict[str, type] = {
-    # Military (8)
+    # Military (9)
     "mobilize": MobilizeAction,
     "strike": StrikeAction,
     "advance": AdvanceAction,
@@ -730,7 +909,8 @@ ACTION_REGISTRY: Dict[str, type] = {
     "defensive_posture": DefensivePostureAction,
     "probe": ProbeAction,
     "signal_resolve": SignalResolveAction,
-    # Diplomatic (7)
+    "deploy_forward": DeployForwardAction,
+    # Diplomatic (10)
     "negotiate": NegotiateAction,
     "targeted_sanction": TargetedSanctionAction,
     "comprehensive_sanction": ComprehensiveSanctionAction,
@@ -738,15 +918,21 @@ ACTION_REGISTRY: Dict[str, type] = {
     "condemn": CondemnAction,
     "intel_sharing": IntelSharingAction,
     "back_channel": BackChannelAction,
-    # Economic (4)
+    "lawfare_filing": LawfareFilingAction,
+    "multilateral_appeal": MultilateralAppealAction,
+    "expel_diplomats": ExpelDiplomatsAction,
+    # Economic (6)
     "embargo": EmbargoAction,
     "foreign_aid": ForeignAidAction,
     "cut_supply": CutSupplyAction,
     "technology_restriction": TechnologyRestrictionAction,
-    # Information / Cyber (3)
+    "asset_freeze": AssetFreezeAction,
+    "supply_chain_diversion": SupplyChainDiversionAction,
+    # Information / Cyber (4)
     "propaganda": PropagandaAction,
     "partial_coercion": PartialCoercionAction,
     "cyber_operation": CyberOperationAction,
+    "hack_and_leak": HackAndLeakAction,
     # Nuclear (1)
     "nuclear_signal": NuclearSignalAction,
     # Inaction (2)

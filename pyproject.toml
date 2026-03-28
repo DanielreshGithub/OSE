@@ -16,6 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
+ose = "cli.ose:main"
 ose-run = "cli.run:main"
 ose-report = "analysis.report:main"
 ose-analyze = "analysis.__main__:main"

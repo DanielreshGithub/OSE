@@ -7,13 +7,12 @@ Usage:
     python -m cli.run --scenario taiwan_strait --turns 10 --provider openrouter --model google/gemini-2.5-pro-preview
     python -m cli.run --help
 
-Doctrine conditions: realist | liberal | org_process | baseline
+Doctrine conditions: realist | liberal | org_process | constructivist | marxist | baseline
 Providers: anthropic | openrouter
 """
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import uuid
 
@@ -26,7 +25,9 @@ SCENARIO_REGISTRY = {
     "taiwan_strait": "scenarios.taiwan_strait.TaiwanStraitScenario",
 }
 
-VALID_DOCTRINES = ["realist", "liberal", "org_process", "baseline"]
+VALID_DOCTRINES = ["realist", "liberal", "org_process", "constructivist", "marxist", "baseline"]
+
+
 def load_scenario(name: str, seed: int = 0):
     """Dynamically import and instantiate a scenario class."""
     if name not in SCENARIO_REGISTRY:
@@ -38,7 +39,7 @@ def load_scenario(name: str, seed: int = 0):
     return getattr(module, class_name)(seed=seed)
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="OSE — Omni-Simulation Engine",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -47,7 +48,9 @@ Doctrine conditions:
   realist       Waltzian structural realism: relative gains, power maximization
   liberal       Keohane liberal institutionalism: interdependence, cooperation
   org_process   Allison Model II: SOPs, bureaucratic inertia, satisficing
-  baseline      No doctrine prescription; actor identity only
+  constructivist Identity and legitimacy: norms, role, reputation, signaling
+  marxist       Structural dependency: capital autonomy, hierarchy, anti-hegemonic leverage
+  baseline      Allison Model I rational actor: explicit expected utility optimization
         """,
     )
     parser.add_argument(
@@ -91,8 +94,12 @@ Doctrine conditions:
         "--quiet", action="store_true",
         help="Suppress Rich terminal display",
     )
+    return parser
 
-    args = parser.parse_args()
+
+def main(argv: list[str] | None = None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     # Build provider
     require_provider_env(args.provider)

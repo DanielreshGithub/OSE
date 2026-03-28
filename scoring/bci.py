@@ -18,7 +18,7 @@ Methodology:
 
 Normalized entropy: H / log2(|action_space|)
   = 0.0  if actor always picks the same action
-  = 1.0  if actor picks uniformly across all 23 actions
+  = 1.0  if actor picks uniformly across all 32 actions
 
 We also compute BCI at the CATEGORY level (military / diplomatic / economic /
 information / inaction) for coarser but more interpretable analysis.
@@ -32,7 +32,7 @@ from collections import defaultdict
 from typing import Dict, List, Optional
 
 ACTION_CATEGORIES = {
-    # Military (8)
+    # Military (9)
     "mobilize": "military",
     "strike": "military",
     "advance": "military",
@@ -41,7 +41,8 @@ ACTION_CATEGORIES = {
     "defensive_posture": "military",
     "probe": "military",
     "signal_resolve": "military",
-    # Diplomatic (7)
+    "deploy_forward": "military",
+    # Diplomatic (10)
     "negotiate": "diplomatic",
     "targeted_sanction": "diplomatic",
     "comprehensive_sanction": "diplomatic",
@@ -49,15 +50,21 @@ ACTION_CATEGORIES = {
     "condemn": "diplomatic",
     "intel_sharing": "diplomatic",
     "back_channel": "diplomatic",
-    # Economic (4)
+    "lawfare_filing": "diplomatic",
+    "multilateral_appeal": "diplomatic",
+    "expel_diplomats": "diplomatic",
+    # Economic (6)
     "embargo": "economic",
     "foreign_aid": "economic",
     "cut_supply": "economic",
     "technology_restriction": "economic",
-    # Information / Cyber (3)
+    "asset_freeze": "economic",
+    "supply_chain_diversion": "economic",
+    # Information / Cyber (4)
     "propaganda": "information",
     "partial_coercion": "information",
     "cyber_operation": "information",
+    "hack_and_leak": "information",
     # Nuclear (1)
     "nuclear_signal": "nuclear",
     # Inaction (2)

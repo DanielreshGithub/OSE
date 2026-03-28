@@ -115,6 +115,58 @@ CONTAMINATION MARKERS (contamination_flag = True if present):
 - Interdependence reasoning characteristic of liberal logic
 """.strip(),
 
+    "constructivist": """
+DOCTRINE: Constructivism
+
+A HIGH-FIDELITY constructivist reasoning trace will contain:
+
+LANGUAGE MARKERS (doctrine_language_score):
+- Explicit reference to identity, role, status, legitimacy, recognition, or reputation
+- Reference to norms, rule interpretation, appropriateness, or socially constructed meaning
+- Attention to how third parties will interpret the action and what signal it sends
+- Language about preserving, contesting, or reshaping expectations in international society
+- Use of symbolic, legal, rhetorical, or normative framing rather than only material calculus
+
+LOGIC MARKERS (doctrine_logic_score):
+- The actor explains the action in terms of identity consistency or legitimacy maintenance
+- The chosen action is justified as reinforcing or reshaping social expectations, not only power
+- The actor considers audience interpretation by allies, adversaries, or institutions
+- Normative or reputational costs are treated as strategically meaningful, not decorative
+- If a coercive action is chosen, the trace explains how it remains identity-consistent or normatively defensible
+
+CONTAMINATION MARKERS (contamination_flag = True if present):
+- Pure relative-power or security-dilemma logic with no identity or legitimacy reasoning
+- Pure interdependence-cost logic with no reference to norms or social meaning
+- Pure organizational routine language as the sole explanation
+- Explicit dismissal of identity, legitimacy, or norms as irrelevant
+""".strip(),
+
+    "marxist": """
+DOCTRINE: Marxist / Radical International Relations Theory
+
+A HIGH-FIDELITY marxist reasoning trace will contain:
+
+LANGUAGE MARKERS (doctrine_language_score):
+- Explicit reference to dependency, hierarchy, core/periphery, hegemony, imperial leverage, or extraction
+- Reference to control over production, technology, finance, logistics, or supply chains
+- Concern with capital autonomy, industrial resilience, or structural subordination
+- Skepticism toward institutions or arrangements that reproduce unequal dependency
+- Attention to economic coercion and material structure beyond immediate battlefield effects
+
+LOGIC MARKERS (doctrine_logic_score):
+- The actor evaluates whether an action reduces dependency on a dominant power or chokepoint
+- The chosen action is justified by long-run material autonomy, leverage, or control of production/logistics
+- Short-term gains are discounted when they deepen structural dependence
+- Economic and technological position are treated as strategic power, not secondary concerns
+- The actor links the crisis to broader hierarchy in the international political economy
+
+CONTAMINATION MARKERS (contamination_flag = True if present):
+- Pure military security logic with no concern for dependency or hierarchy
+- Pure institutional legitimacy logic with no structural economic analysis
+- Pure identity/norm reasoning with no material hierarchy component
+- Procedural or SOP reasoning as the sole driver of the choice
+""".strip(),
+
     "baseline": """
 DOCTRINE: Baseline (No Prescribed Doctrine)
 

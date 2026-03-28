@@ -13,6 +13,8 @@ Doctrine conditions:
                   multilateral cooperation, reputational costs of defection
   "org_process" — Allison Model II: organizational routines, SOPs, bureaucratic
                   inertia, satisficing over optimizing
+  "constructivist" — Identity, legitimacy, norm entrepreneurship, role-based behavior
+  "marxist"     — Structural dependency, core/periphery hierarchy, capital autonomy
   "baseline"    — Rational Actor Model (Allison Model I): unitary optimizer, pure goal/cost utility calculation
 """
 from __future__ import annotations
@@ -65,6 +67,34 @@ Core principles you must apply explicitly:
 When reasoning, explicitly identify which organizational routine or SOP your action follows, and why a more aggressive or novel option was NOT selected.
 """.strip(),
 
+    "constructivist": """
+You follow CONSTRUCTIVISM as your decision doctrine.
+
+Core principles you must apply explicitly:
+- State interests are not fixed solely by material capability; they are shaped by identity, role, status, and shared norms.
+- Ask not only "what increases power?" but also "what kind of actor are we being by taking this action?"
+- International politics is socially constructed: legitimacy, recognition, and reputation can materially alter future behavior by other actors.
+- Norm violations carry long-run identity and legitimacy costs even when they offer short-run tactical gains.
+- Symbolic, communicative, legal, and normative actions can change the strategic environment by redefining what is acceptable or expected.
+- Consider how allies, adversaries, and third parties will interpret your action and what identity signal it sends.
+
+When reasoning, explicitly identify: (a) the relevant state identity or role, (b) the international norm or legitimacy consideration in play, and (c) how the chosen action preserves, contests, or reshapes that social meaning.
+""".strip(),
+
+    "marxist": """
+You follow MARXIST / RADICAL INTERNATIONAL RELATIONS THEORY as your decision doctrine.
+
+Core principles you must apply explicitly:
+- Treat the conflict as embedded in a global hierarchy of capital, production, technology, and dependency.
+- Ask whether an action increases or reduces your structural dependence on dominant economic powers, financial chokepoints, or externally controlled supply chains.
+- Material power matters, but not only as military force; control over production, technology, credit, logistics, and labor is strategically decisive.
+- Be skeptical of institutions and arrangements that reproduce unequal dependency under the language of "stability" or "cooperation."
+- Favor actions that increase capital autonomy, industrial resilience, and bargaining leverage against hegemonic control.
+- Evaluate whether a short-term tactical gain reinforces a long-term subordinate position in the global political economy.
+
+When reasoning, explicitly identify: (a) the relevant dependency structure, (b) whether the action increases or decreases capital autonomy, and (c) how the action affects long-run control over technology, finance, logistics, or production.
+""".strip(),
+
     "baseline": """
 You follow the RATIONAL ACTOR MODEL (Allison Model I) as your decision framework.
 
@@ -74,7 +104,7 @@ Core principles you must apply explicitly:
 - Select the action with the best expected utility: highest goal advancement at lowest expected total cost.
 - You are NOT constrained by organizational routines, institutional inertia, or coalition pressures — you optimize freely from your goal set.
 - If two actions have similar expected utility, prefer the lower-cost option (cost minimization as tiebreaker).
-- Do not apply realist relative-gains logic, liberal interdependence logic, or org_process SOP logic — reason purely from your stated goals and a cost-benefit calculation.
+- Do not apply realist relative-gains logic, liberal interdependence logic, org_process SOP logic, constructivist identity logic, or marxist dependency logic — reason purely from your stated goals and a cost-benefit calculation.
 
 When reasoning, explicitly state: (a) your current highest-priority reachable goal, (b) the expected utility estimate for your chosen action vs. the top alternative, (c) why the chosen action dominates on the utility calculation.
 """.strip(),

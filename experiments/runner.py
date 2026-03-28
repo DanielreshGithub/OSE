@@ -1,7 +1,7 @@
 """
-Experiment Runner — orchestrates the full 4-condition × N-run experimental design.
+Experiment Runner — orchestrates the full doctrine-condition × N-run experimental design.
 
-Runs the simulation N times per doctrine condition across all 4 conditions,
+Runs the simulation N times per doctrine condition across the selected conditions,
 then scores all decisions and computes BCI.
 
 Usage:
@@ -13,8 +13,7 @@ Output:
         <condition>_run_<n>.db       — per-run SQLite logs
         experiment_summary.json      — aggregate statistics
 
-Full 80-run experiment (4 × 20): ~$130–165 at Sonnet rates.
-Reduced pilot (4 × 5): ~$30–40.
+Experiment cost depends on the number of doctrine conditions, runs, turns, and provider/model.
 """
 from __future__ import annotations
 
@@ -34,7 +33,7 @@ from providers.factory import VALID_PROVIDERS, build_provider, require_provider_
 
 load_dotenv()
 
-VALID_DOCTRINES = ["realist", "liberal", "org_process", "baseline"]
+VALID_DOCTRINES = ["realist", "liberal", "org_process", "constructivist", "marxist", "baseline"]
 SCENARIO_REGISTRY = {
     "taiwan_strait": "scenarios.taiwan_strait.TaiwanStraitScenario",
 }
@@ -151,9 +150,9 @@ def classify_outcomes(db_paths: List[str]) -> Dict[str, int]:
     return counts
 
 
-def main():
+def main(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(
-        description="OSE Experiment Runner — 4-condition × N-run batch executor"
+        description="OSE Experiment Runner — doctrine-condition × N-run batch executor"
     )
     parser.add_argument("--scenario", default="taiwan_strait",
                         choices=list(SCENARIO_REGISTRY.keys()))
@@ -182,7 +181,7 @@ def main():
     parser.add_argument("--skip-bci", action="store_true",
                         help="Skip BCI computation after runs")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     require_provider_env(args.provider)
     if not args.skip_scoring and not os.environ.get("ANTHROPIC_API_KEY"):

@@ -10,7 +10,7 @@ from engine.actions import ACTION_REGISTRY, parse_action_from_dict, get_availabl
 from pydantic import ValidationError
 
 # 1. Action registry has expected entries
-assert len(ACTION_REGISTRY) == 25, f"Expected 25 actions, got {len(ACTION_REGISTRY)}"
+assert len(ACTION_REGISTRY) == 32, f"Expected 32 actions, got {len(ACTION_REGISTRY)}"
 
 # 2. All actions instantiate without error
 for name, cls in ACTION_REGISTRY.items():

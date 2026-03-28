@@ -25,11 +25,13 @@ from engine.costs import compute_action_cost_breakdown
 from engine.actions import (
     BaseAction,
     MobilizeAction, StrikeAction, AdvanceAction, WithdrawAction,
-    BlockadeAction, DefensivePostureAction, ProbeAction, SignalResolveAction,
+    BlockadeAction, DefensivePostureAction, ProbeAction, SignalResolveAction, DeployForwardAction,
     NegotiateAction, TargetedSanctionAction, ComprehensiveSanctionAction,
     FormAllianceAction, CondemnAction, IntelSharingAction, BackChannelAction,
+    LawfareFilingAction, MultilateralAppealAction, ExpelDiplomatsAction,
     EmbargoAction, ForeignAidAction, CutSupplyAction, TechnologyRestrictionAction,
-    PropagandaAction, PartialCoercionAction, CyberOperationAction,
+    AssetFreezeAction, SupplyChainDiversionAction,
+    PropagandaAction, PartialCoercionAction, CyberOperationAction, HackAndLeakAction,
     NuclearSignalAction,
     HoldPositionAction, MonitorAction,
 )
@@ -257,6 +259,26 @@ class TurnResolver:
                     affected_actors=list(state.actors.keys()),
                 ))
 
+            elif isinstance(action, DeployForwardAction):
+                costs = _costs_for(state, actor, action)
+                deployment_gain = _scale(0.10, action)
+                actor.military.readiness = _clamp(actor.military.readiness + deployment_gain)
+                actor.military.logistics_capacity = _clamp(
+                    actor.military.logistics_capacity - max(_scale(0.05, action), costs.military_cost * 0.5)
+                )
+                actor.current_posture = "escalatory"
+                for rel in state.relationships:
+                    if rel.to_actor == actor_id and rel.relationship_type in ("ally", "partner"):
+                        rel.deterrence_credibility = _clamp(rel.deterrence_credibility + 0.05)
+                tension_delta += costs.tension_impact
+                destination = action.target_zone or action.locality or "forward theater"
+                events.append(GlobalEvent(
+                    turn=state.turn, category="military",
+                    description=f"{actor_id} deploys forces forward toward {destination}.",
+                    source="actor", caused_by_actor=actor_id,
+                    affected_actors=list(state.actors.keys()),
+                ))
+
             # ── Diplomatic ────────────────────────────────────────────────────
 
             elif isinstance(action, NegotiateAction) and action.target_actor:
@@ -396,6 +418,72 @@ class TurnResolver:
                     affected_actors=[actor_id, action.target_actor],
                 ))
 
+            elif isinstance(action, LawfareFilingAction):
+                costs = _costs_for(state, actor, action)
+                actor.political.international_standing = _clamp(
+                    actor.political.international_standing + _scale(0.03, action)
+                )
+                if action.target_actor:
+                    target = state.get_actor(action.target_actor)
+                    if target:
+                        target.political.international_standing = _clamp(
+                            target.political.international_standing - _scale(0.04, action)
+                        )
+                actor.political.domestic_stability = _clamp(
+                    actor.political.domestic_stability - costs.political_cost
+                )
+                tension_delta += costs.tension_impact
+                dispute_target = action.target_actor or action.target_zone
+                events.append(GlobalEvent(
+                    turn=state.turn, category="diplomatic",
+                    description=f"{actor_id} files legal challenge regarding {dispute_target}.",
+                    source="actor", caused_by_actor=actor_id,
+                    affected_actors=[actor_id] + ([action.target_actor] if action.target_actor else []),
+                ))
+
+            elif isinstance(action, MultilateralAppealAction):
+                costs = _costs_for(state, actor, action)
+                actor.political.international_standing = _clamp(
+                    actor.political.international_standing + _scale(0.04, action)
+                )
+                state.systemic.alliance_system_cohesion = _clamp(
+                    state.systemic.alliance_system_cohesion + _scale(0.03, action)
+                )
+                actor.political.domestic_stability = _clamp(
+                    actor.political.domestic_stability - costs.political_cost
+                )
+                tension_delta += costs.tension_impact
+                events.append(GlobalEvent(
+                    turn=state.turn, category="diplomatic",
+                    description=f"{actor_id} issues multilateral appeal for coordinated international response.",
+                    source="actor", caused_by_actor=actor_id,
+                    affected_actors=list(state.actors.keys()),
+                ))
+
+            elif isinstance(action, ExpelDiplomatsAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
+                rel = state.get_relationship(actor_id, action.target_actor)
+                reverse_rel = state.get_relationship(action.target_actor, actor_id)
+                if rel:
+                    rel.trust_score = _clamp(rel.trust_score - _scale(0.08, action))
+                if reverse_rel:
+                    reverse_rel.trust_score = _clamp(reverse_rel.trust_score - _scale(0.05, action))
+                target = state.get_actor(action.target_actor)
+                if target:
+                    target.political.international_standing = _clamp(
+                        target.political.international_standing - _scale(0.03, action)
+                    )
+                actor.political.domestic_stability = _clamp(
+                    actor.political.domestic_stability - costs.political_cost
+                )
+                tension_delta += costs.tension_impact
+                events.append(GlobalEvent(
+                    turn=state.turn, category="diplomatic",
+                    description=f"{actor_id} expels diplomats from {action.target_actor}.",
+                    source="actor", caused_by_actor=actor_id,
+                    affected_actors=[actor_id, action.target_actor],
+                ))
+
             # ── Economic ──────────────────────────────────────────────────────
 
             elif isinstance(action, EmbargoAction) and action.target_actor:
@@ -491,6 +579,53 @@ class TurnResolver:
                     affected_actors=[actor_id, action.target_actor],
                 ))
 
+            elif isinstance(action, AssetFreezeAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
+                target = state.get_actor(action.target_actor)
+                if target:
+                    target.economic.foreign_reserves = _clamp(
+                        target.economic.foreign_reserves - _scale(0.12, action)
+                    )
+                    target.economic.gdp_strength = _clamp(
+                        target.economic.gdp_strength - _scale(0.05, action)
+                    )
+                actor.economic.trade_openness = _clamp(
+                    actor.economic.trade_openness - costs.economic_cost
+                )
+                actor.political.domestic_stability = _clamp(
+                    actor.political.domestic_stability - costs.political_cost
+                )
+                tension_delta += costs.tension_impact
+                events.append(GlobalEvent(
+                    turn=state.turn, category="economic",
+                    description=f"{actor_id} freezes financial assets linked to {action.target_actor}.",
+                    source="actor", caused_by_actor=actor_id,
+                    affected_actors=[actor_id, action.target_actor],
+                ))
+
+            elif isinstance(action, SupplyChainDiversionAction):
+                costs = _costs_for(state, actor, action)
+                actor.economic.industrial_capacity = _clamp(
+                    actor.economic.industrial_capacity + _scale(0.05, action)
+                )
+                actor.economic.semiconductor_dependency = _clamp(
+                    actor.economic.semiconductor_dependency - _scale(0.07, action)
+                )
+                actor.economic.gdp_strength = _clamp(
+                    actor.economic.gdp_strength - costs.economic_cost
+                )
+                state.systemic.semiconductor_supply_chain_integrity = _clamp(
+                    state.systemic.semiconductor_supply_chain_integrity + _scale(0.03, action)
+                )
+                tension_delta += costs.tension_impact
+                target_clause = f" away from {action.target_actor}" if action.target_actor else ""
+                events.append(GlobalEvent(
+                    turn=state.turn, category="economic",
+                    description=f"{actor_id} diverts critical supply chains{target_clause}.",
+                    source="actor", caused_by_actor=actor_id,
+                    affected_actors=[actor_id] + ([action.target_actor] if action.target_actor else []),
+                ))
+
             # ── Information / Cyber ───────────────────────────────────────────
 
             elif isinstance(action, PropagandaAction):
@@ -550,6 +685,31 @@ class TurnResolver:
                         f"{actor_id} conducts cyber operation against {action.target_actor} "
                         f"(deniable; target industrial capacity and C2 degraded)."
                     ),
+                    source="actor", caused_by_actor=actor_id,
+                    affected_actors=[actor_id, action.target_actor],
+                ))
+
+            elif isinstance(action, HackAndLeakAction) and action.target_actor:
+                costs = _costs_for(state, actor, action)
+                target = state.get_actor(action.target_actor)
+                if target:
+                    target.political.regime_legitimacy = _clamp(
+                        target.political.regime_legitimacy - _scale(0.08, action)
+                    )
+                    target.political.domestic_stability = _clamp(
+                        target.political.domestic_stability - _scale(0.05, action)
+                    )
+                    target.political.international_standing = _clamp(
+                        target.political.international_standing - _scale(0.04, action)
+                    )
+                actor.economic.gdp_strength = _clamp(actor.economic.gdp_strength - costs.economic_cost)
+                actor.political.domestic_stability = _clamp(
+                    actor.political.domestic_stability - costs.political_cost
+                )
+                tension_delta += costs.tension_impact
+                events.append(GlobalEvent(
+                    turn=state.turn, category="information",
+                    description=f"{actor_id} conducts hack-and-leak operation against {action.target_actor}.",
                     source="actor", caused_by_actor=actor_id,
                     affected_actors=[actor_id, action.target_actor],
                 ))

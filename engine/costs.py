@@ -68,6 +68,7 @@ BASE_ACTION_COSTS: Dict[str, ActionCostProfile] = {
     "defensive_posture": ActionCostProfile(military_cost=0.05, tension_impact=0.00, downstream_risk=0.10),
     "probe": ActionCostProfile(military_cost=0.05, uncertainty_cost=-0.04, tension_impact=0.02, downstream_risk=0.12),
     "signal_resolve": ActionCostProfile(political_cost=0.02, tension_impact=0.01, downstream_risk=0.08),
+    "deploy_forward": ActionCostProfile(military_cost=0.12, political_cost=0.04, tension_impact=0.05, downstream_risk=0.18),
     "negotiate": ActionCostProfile(political_cost=0.05, tension_impact=-0.06, downstream_risk=0.10),
     "targeted_sanction": ActionCostProfile(economic_cost=0.03, political_cost=0.03, tension_impact=0.03, downstream_risk=0.12),
     "comprehensive_sanction": ActionCostProfile(economic_cost=0.10, political_cost=0.08, tension_impact=0.08, downstream_risk=0.25),
@@ -75,13 +76,19 @@ BASE_ACTION_COSTS: Dict[str, ActionCostProfile] = {
     "condemn": ActionCostProfile(political_cost=0.01, tension_impact=0.01, downstream_risk=0.04),
     "intel_sharing": ActionCostProfile(political_cost=0.02, uncertainty_cost=-0.05, downstream_risk=0.08),
     "back_channel": ActionCostProfile(political_cost=0.01, tension_impact=-0.03, downstream_risk=0.06),
+    "lawfare_filing": ActionCostProfile(political_cost=0.03, tension_impact=-0.01, downstream_risk=0.05),
+    "multilateral_appeal": ActionCostProfile(political_cost=0.03, tension_impact=-0.03, downstream_risk=0.06),
+    "expel_diplomats": ActionCostProfile(political_cost=0.05, tension_impact=0.04, downstream_risk=0.10),
     "embargo": ActionCostProfile(economic_cost=0.10, tension_impact=0.05, downstream_risk=0.18),
     "foreign_aid": ActionCostProfile(economic_cost=0.08, political_cost=0.02, tension_impact=-0.01, downstream_risk=0.08),
     "cut_supply": ActionCostProfile(economic_cost=0.04, tension_impact=0.04, downstream_risk=0.15),
     "technology_restriction": ActionCostProfile(economic_cost=0.05, tension_impact=0.05, downstream_risk=0.18),
+    "asset_freeze": ActionCostProfile(economic_cost=0.04, political_cost=0.03, tension_impact=0.04, downstream_risk=0.14),
+    "supply_chain_diversion": ActionCostProfile(economic_cost=0.05, political_cost=0.02, tension_impact=0.01, downstream_risk=0.10),
     "propaganda": ActionCostProfile(political_cost=0.01, uncertainty_cost=0.02, tension_impact=0.01, downstream_risk=0.06),
     "partial_coercion": ActionCostProfile(military_cost=0.04, political_cost=0.05, tension_impact=0.06, downstream_risk=0.20),
     "cyber_operation": ActionCostProfile(economic_cost=0.02, uncertainty_cost=0.03, tension_impact=0.02, downstream_risk=0.16),
+    "hack_and_leak": ActionCostProfile(economic_cost=0.02, political_cost=0.04, uncertainty_cost=0.04, tension_impact=0.03, downstream_risk=0.18),
     "nuclear_signal": ActionCostProfile(political_cost=0.08, tension_impact=0.14, downstream_risk=0.40),
     "hold_position": ActionCostProfile(tension_impact=0.00, downstream_risk=0.02),
     "monitor": ActionCostProfile(uncertainty_cost=-0.02, tension_impact=0.00, downstream_risk=0.03),
@@ -124,21 +131,26 @@ def capability_multiplier(capabilities: CapabilityVector, action_type: str) -> A
     risk = 1.0
     explanation = []
 
-    if action_type in {"strike", "advance", "blockade", "partial_coercion"}:
+    if action_type in {"strike", "advance", "blockade", "partial_coercion", "deploy_forward"}:
         military *= max(0.75, 1.15 - 0.35 * c["logistics_endurance"])
         tension *= 1.0 + (0.20 * c["escalation_tolerance"])
         risk *= 1.0 - (0.15 * c["intelligence_quality"])
         explanation.append("military posture and logistics shape hard-power execution")
 
-    if action_type in {"embargo", "targeted_sanction", "comprehensive_sanction", "technology_restriction", "cut_supply"}:
+    if action_type in {"embargo", "targeted_sanction", "comprehensive_sanction", "technology_restriction", "cut_supply", "asset_freeze", "supply_chain_diversion"}:
         economic *= max(0.80, 1.10 - 0.30 * c["economic_coercion_capacity"])
         risk *= 1.0 - (0.10 * c["alliance_leverage"])
         explanation.append("economic coercion capacity affects cost discipline")
 
-    if action_type in {"intel_sharing", "monitor", "probe", "back_channel"}:
+    if action_type in {"intel_sharing", "monitor", "probe", "back_channel", "lawfare_filing", "multilateral_appeal", "expel_diplomats"}:
         political *= max(0.80, 1.05 - 0.20 * c["bureaucratic_flexibility"])
         tension *= max(0.80, 1.0 - 0.10 * c["signaling_credibility"])
         explanation.append("bureaucratic flexibility and signaling affect low-intensity moves")
+
+    if action_type in {"cyber_operation", "hack_and_leak"}:
+        risk *= max(0.75, 1.10 - 0.25 * c["cyber_capability"])
+        political *= max(0.85, 1.05 - 0.15 * c["intelligence_quality"])
+        explanation.append("cyber capability and intelligence quality shape deniable operations")
 
     if action_type == "nuclear_signal":
         political *= max(0.85, 1.10 - 0.25 * c["war_aversion"])
