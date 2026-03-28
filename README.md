@@ -1,10 +1,4 @@
 # OSE — Omni-Simulation Engine
-
-**Status:** Active
-**Started:** 2026-03-26
-**Build status:** v0.3 — capability system, pressure model, open-ended event generation complete · ready for first run
-**Repo:** `~/Documents/OSE/`
-
 ---
 
 ## Purpose
@@ -14,8 +8,7 @@ OSE is a modular geopolitical conflict simulation framework where LLM agents pla
 **Research thesis:** Can LLMs faithfully follow qualitative IR decision doctrines, and does doctrine assignment change behavioural outcomes in measurable ways?
 
 This is an **interventional** experiment, not descriptive. The doctrine IS the independent variable. Every other LLM conflict simulation just observes what LLMs do. OSE prescribes how they must reason and measures compliance.
-
-OSE is not a game. It is a **research instrument**.
+.
 
 ---
 
