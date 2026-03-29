@@ -82,6 +82,166 @@ python3 ose batch \
   --skip-bci
 ```
 
+## Data Flow
+
+```mermaid
+flowchart TD
+    WS([World State]) --> CAP[Capability Builder\n13-field normalized vector]
+    WS --> PRES[Pressure Model\n8-dimension pressure state]
+    CAP --> PF[Perception Filter\nnoise scaled to actor intel quality]
+    PRES --> PF
+    PF --> PP[Persona Prompt\ndoctrine · identity · war aversion · history]
+    PP --> DP[Decision Prompt\ncapabilities + pressures + available actions]
+    DP --> LLM{LLM Provider\nAnthropic · OpenRouter · any model}
+    LLM --> AP[Action Parser]
+    AP --> V{Rule Validator\ncapability-gated · pure logic}
+    V -->|valid| TR[Turn Resolver\nsimultaneous resolution]
+    V -->|invalid| RT[Retry\nerror injected · max 2x]
+    RT -->|still invalid| FB[Hold Position\nfallback]
+    TR --> MUT[State Mutation\nresource deltas applied]
+    MUT --> CD[Cascade Detector\n9 rules]
+    CD --> LOG[Logger\nSQLite · full reasoning trace]
+    LOG --> NEXT([Next Turn])
+    EG([Event Generator\npressure + capability gated]) --> TR
+```
+
+## Module Graph
+
+```mermaid
+graph LR
+    subgraph World["World Layer"]
+        State[State Models\nall Pydantic resources]
+        Events[Event Models\ndecisions · logs · records]
+        RelGraph[Relationship Graph\nbilateral query wrapper]
+        WCap[Capability Vector\n13-field normalized actor vector]
+        WPres[Pressure State\n8-dimension pressure model]
+    end
+
+    subgraph Providers["Provider Layer"]
+        ProvBase[LLMProvider ABC\nProviderCallResult · usage tracking]
+        ProvAnthropic[Anthropic Provider\ntool_use · cache_control]
+        ProvOpenRouter[OpenRouter Provider\nOpenAI-compat · 100+ models]
+        ProvFactory[Provider Factory\nbuild_provider · require_env]
+    end
+
+    subgraph Actors["Actor Layer"]
+        Prompts[Prompt Templates\nsystem + decision text]
+        Persona[Persona Builder\n6 doctrine conditions]
+        LLMActor[LLM Decision Actor\nperception → CoT → call → retry]
+    end
+
+    subgraph Engine["Engine Layer"]
+        Actions[Action Space\n32 typed action classes]
+        Validator[Validator\ncapability-gated firewall]
+        Resolver[Turn Resolver\nsimultaneous conflict adjudication]
+        Cascade[Cascade Detector\n9 rules]
+        Loop[Simulation Loop\nfull turn lifecycle]
+        ECap[Capability Builder]
+        EPres[Pressure Tracker\nSmoothed ScenarioPressureModel]
+        Perception[Perception Filter\ndeterministic SHA-256 noise]
+        EventGen[Event Generator\npressure + capability gated]
+    end
+
+    subgraph Scenarios["Scenario Layer"]
+        ScenarioBase[Scenario Base ABC]
+        Taiwan[Taiwan Strait\n4 actors · pressure-gated events]
+    end
+
+    subgraph Scoring["Scoring Layer"]
+        Fidelity[Doctrine Fidelity\nLLM-as-judge rubric]
+        BCI[Behavioral Consistency\nnormalized entropy across runs]
+    end
+
+    subgraph Analysis["Analysis Layer"]
+        AEngine[Analysis Engine\npure SQL + Python stats]
+        Analyst[LLM Analyst\noptional qualitative layer]
+        Renderer[Renderer\nMarkdown + LaTeX dual output]
+        Report[Report CLI]
+    end
+
+    Runner[Experiment Runner\nbatch orchestrator]
+
+    State --> LLMActor
+    State --> Actions
+    State --> Resolver
+    State --> Cascade
+    State --> ECap
+    State --> EPres
+    Events --> LLMActor
+    Events --> Loop
+    RelGraph --> LLMActor
+    WCap --> LLMActor
+    WCap --> Validator
+    WPres --> LLMActor
+    WPres --> EventGen
+    ECap --> WCap
+    EPres --> WPres
+    ProvBase --> ProvAnthropic
+    ProvBase --> ProvOpenRouter
+    ProvFactory --> LLMActor
+    Perception --> LLMActor
+    EventGen --> Loop
+    ScenarioBase --> Taiwan
+    Prompts --> Persona
+    Persona --> LLMActor
+    Actions --> Validator
+    Actions --> Resolver
+    Validator --> Loop
+    Resolver --> Loop
+    Cascade --> Loop
+    LLMActor --> Loop
+    Taiwan --> Loop
+    Loop --> Fidelity
+    Runner --> Loop
+    Runner --> BCI
+    BCI --> AEngine
+    Fidelity --> AEngine
+    AEngine --> Analyst
+    AEngine --> Renderer
+    Analyst --> Renderer
+    Renderer --> Report
+```
+
+## Turn Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant Pool as Event Pool
+    participant Engine as Simulation Engine
+    participant Agent as State Agent
+    participant LLM as LLM Provider
+    participant Validator as Rule Validator
+    participant Resolver as Turn Resolver
+    participant Cascade
+    participant Logger
+
+    Engine->>Pool: generate events (tension + capability gated)
+    Pool-->>Engine: 0–3 events
+
+    loop Each State Actor
+        Engine->>Agent: request action (world state snapshot)
+        Agent->>Agent: apply perception filter (SHA-256 noise)
+        Agent->>LLM: persona + doctrine + perceived state + actions
+        LLM-->>Agent: reasoning trace + action call
+        Agent->>Validator: validate action legality
+        alt valid
+            Validator-->>Agent: approved
+        else invalid
+            Validator-->>Agent: error feedback
+            Agent->>LLM: retry with constraints (max 2x)
+        end
+        Agent-->>Engine: action + DecisionRecord
+    end
+
+    Engine->>Resolver: resolve all actions simultaneously
+    Resolver-->>Engine: state deltas + turn events
+    Engine->>Cascade: detect cascade triggers
+    Cascade-->>Engine: cascade events
+    Engine->>Logger: log turn (decisions · reasoning · state snapshot)
+    Logger-->>Engine: done
+    Engine->>Engine: check terminal conditions
+```
+
 ## Launcher Rules
 
 The top-level launcher is intentionally simple:
