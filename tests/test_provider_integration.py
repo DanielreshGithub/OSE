@@ -33,13 +33,14 @@ class _FakeMessage:
 
 
 class _FakeChoice:
-    def __init__(self, message):
+    def __init__(self, message, finish_reason: str = "tool_calls"):
         self.message = message
+        self.finish_reason = finish_reason
 
 
 class _FakeResponse:
-    def __init__(self, message):
-        self.choices = [_FakeChoice(message)]
+    def __init__(self, message, finish_reason: str = "tool_calls"):
+        self.choices = [_FakeChoice(message, finish_reason=finish_reason)]
         self.usage = type(
             "Usage",
             (),
@@ -72,6 +73,81 @@ class _FakeChat:
 class _FakeOpenAIClient:
     def __init__(self, *args, **kwargs):
         self.chat = _FakeChat()
+
+
+class _FallbackToolChoiceCompletions:
+    def __init__(self):
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if "tool_choice" in kwargs:
+            raise Exception(
+                "Error code: 404 - No endpoints found that support the provided 'tool_choice' value"
+            )
+        return _FakeResponse(
+            _FakeMessage(
+                content="Keep options open and monitor the situation.",
+                tool_calls=[
+                    _FakeToolCall(
+                        '{"action_type":"monitor","rationale":"Compatibility fallback via auto tools."}'
+                    )
+                ],
+            )
+        )
+
+
+class _FallbackToolChoiceClient:
+    def __init__(self, *args, **kwargs):
+        self.chat = type("Chat", (), {"completions": _FallbackToolChoiceCompletions()})()
+
+
+class _JsonFallbackCompletions:
+    def __init__(self):
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if len(self.calls) < 3:
+            return _FakeResponse(
+                _FakeMessage(content=None, tool_calls=None),
+                finish_reason="length",
+            )
+        return _FakeResponse(
+            _FakeMessage(
+                content='{"action_type":"monitor","intensity":"medium","rationale":"Return compact JSON only."}',
+                tool_calls=None,
+            ),
+            finish_reason="stop",
+        )
+
+
+class _JsonFallbackClient:
+    def __init__(self, *args, **kwargs):
+        self.chat = type("Chat", (), {"completions": _JsonFallbackCompletions()})()
+
+
+class _CaptureTemperatureCompletions:
+    def __init__(self):
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return _FakeResponse(
+            _FakeMessage(
+                content="Choose monitor and preserve flexibility.",
+                tool_calls=[
+                    _FakeToolCall(
+                        '{"action_type":"monitor","rationale":"Temperature wiring test."}'
+                    )
+                ],
+            )
+        )
+
+
+class _CaptureTemperatureClient:
+    def __init__(self, *args, **kwargs):
+        self.chat = type("Chat", (), {"completions": _CaptureTemperatureCompletions()})()
 
 
 class _FakeProvider(LLMProvider):
@@ -171,6 +247,50 @@ class ProviderIntegrationTests(unittest.TestCase):
                 )
             self.assertIsNotNone(db_path)
             self.assertTrue(Path(db_path).exists())
+
+    def test_openrouter_provider_retries_without_tool_choice(self):
+        os.environ["OPENROUTER_API_KEY"] = "test-key"
+        with patch("providers.openrouter_provider.openai.OpenAI", _FallbackToolChoiceClient):
+            provider = OpenRouterProvider(model="qwen/qwen3-235b-a22b")
+            result = provider.call(
+                system_prompt="system",
+                user_message="user",
+                action_tool_schema=ACTION_TOOL_SCHEMA,
+            )
+
+        self.assertEqual(result.action_dict["action_type"], "monitor")
+        self.assertEqual(result.usage["compatibility_strategy"], "auto_tools")
+
+    def test_openrouter_provider_falls_back_to_json_content(self):
+        os.environ["OPENROUTER_API_KEY"] = "test-key"
+        with patch("providers.openrouter_provider.openai.OpenAI", _JsonFallbackClient):
+            provider = OpenRouterProvider(model="google/gemini-3.1-pro-preview")
+            result = provider.call(
+                system_prompt="system",
+                user_message="user",
+                action_tool_schema=ACTION_TOOL_SCHEMA,
+            )
+
+        self.assertEqual(result.action_dict["action_type"], "monitor")
+        self.assertEqual(result.action_dict["intensity"], "medium")
+        self.assertEqual(result.usage["compatibility_strategy"], "json_content")
+
+    def test_openrouter_provider_uses_env_temperature(self):
+        with patch.dict(
+            os.environ,
+            {"OPENROUTER_API_KEY": "test-key", "OSE_DEFAULT_TEMPERATURE": "0.35"},
+            clear=False,
+        ):
+            with patch("providers.openrouter_provider.openai.OpenAI", _CaptureTemperatureClient):
+                provider = OpenRouterProvider(model="openai/gpt-4o")
+                provider.call(
+                    system_prompt="system",
+                    user_message="user",
+                    action_tool_schema=ACTION_TOOL_SCHEMA,
+                )
+
+        first_call = provider._client.chat.completions.calls[0]
+        self.assertEqual(first_call["temperature"], 0.35)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ Report sections (in order):
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -42,7 +43,9 @@ class MarkdownRenderer:
             self._title(data),
             self._executive_summary(data, analyst),
             self._experiment_overview(data),
+            self._visual_summary(data),
             self._configuration_summary(data),
+            self._doctrine_model_comparison(data, analyst),
             self._run_inventory(data),
             self._outcome_distribution(data),
             self._escalation_dynamics(data, analyst),
@@ -67,6 +70,19 @@ class MarkdownRenderer:
             f"**Total runs:** {meta['total_runs']}  \n"
             f"**Max turns:** {meta['max_turns']}"
         )
+
+    def _visual_summary(self, data: Dict) -> str:
+        graphs = data.get("graphs", [])
+        if not graphs:
+            return ""
+
+        lines = ["## Visual Summary\n"]
+        for graph in graphs:
+            title = graph.get("title", "Chart")
+            lines.append(f"### {title}\n")
+            lines.append(f"![{title}]({graph['relative_path']})")
+            lines.append("")
+        return "\n".join(lines).strip()
 
     def _executive_summary(self, data: Dict, analyst: Optional[Dict]) -> str:
         if analyst and analyst.get("executive_summary"):
@@ -158,6 +174,66 @@ class MarkdownRenderer:
                 f"{run['outcome']} | {run['final_phase']} | {run['final_tension']:.3f} |"
             )
         return "\n".join(lines)
+
+    def _doctrine_model_comparison(self, data: Dict, analyst: Optional[Dict]) -> str:
+        grouped = _group_configurations_by_doctrine(data)
+        if not grouped:
+            return ""
+
+        analyst_entries = {}
+        if analyst and analyst.get("doctrine_model_comparisons"):
+            analyst_entries = {
+                entry["doctrine"]: entry
+                for entry in analyst["doctrine_model_comparisons"]
+            }
+
+        lines = ["## Doctrine-by-Doctrine Model Comparison\n"]
+
+        for doctrine in data["metadata"]["conditions"]:
+            doctrine_configs = grouped.get(doctrine, [])
+            if not doctrine_configs:
+                continue
+
+            lines.append(f"### {doctrine}\n")
+            analyst_entry = analyst_entries.get(doctrine)
+            if analyst_entry:
+                confidence = max(0.0, min(1.0, float(analyst_entry.get("confidence_score", 0.0))))
+                lines.append(analyst_entry["comparison_summary"])
+                lines.append("")
+                lines.append(
+                    f"**Confidence:** {_confidence_label(confidence)} ({confidence:.0%})  \n"
+                    f"{analyst_entry['confidence_rationale']}"
+                )
+                lines.append("")
+            else:
+                confidence, rationale = _estimate_confidence(doctrine_configs)
+                lines.append(
+                    "Fallback comparison generated from observed outcome, tension, "
+                    "and action-mix differences across configurations."
+                )
+                lines.append("")
+                lines.append(
+                    f"**Confidence:** {_confidence_label(confidence)} ({confidence:.0%})  \n"
+                    f"{rationale}"
+                )
+                lines.append("")
+
+            lines.append("| Provider | Model | Runs | Outcome(s) | Final Tension | Top Categories | DFS Logic |")
+            lines.append("|----------|-------|------|------------|---------------|----------------|-----------|")
+            for stat in doctrine_configs:
+                outcome_str = ", ".join(
+                    f"{outcome}:{count}" for outcome, count in sorted(stat.get("outcomes", {}).items())
+                )
+                dfs = stat.get("dfs")
+                dfs_logic = f"{dfs['mean_logic']:.3f}" if dfs else "—"
+                lines.append(
+                    f"| {stat['provider_name']} | {stat['model_id']} | {stat['n_runs']} | "
+                    f"{outcome_str or '—'} | {stat['mean_final_tension']:.3f} | "
+                    f"{_top_categories(stat)} | {dfs_logic} |"
+                )
+            lines.append("")
+
+        return "\n".join(lines).strip()
 
     def _outcome_distribution(self, data: Dict) -> str:
         bd = data["by_doctrine"]
@@ -377,6 +453,77 @@ class MarkdownRenderer:
         )
 
 
+def _group_configurations_by_doctrine(data: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for stats in data.get("by_configuration", {}).values():
+        grouped[stats["doctrine"]].append(stats)
+    for doctrine, configs in grouped.items():
+        grouped[doctrine] = sorted(configs, key=lambda item: (item["provider_name"], item["model_id"]))
+    return dict(grouped)
+
+
+def _top_categories(stats: Dict[str, Any], limit: int = 3) -> str:
+    categories = sorted(
+        stats.get("aggregate_category_distribution", {}).items(),
+        key=lambda item: (-item[1], item[0]),
+    )[:limit]
+    if not categories:
+        return "—"
+    return ", ".join(f"{name}:{share:.0%}" for name, share in categories)
+
+
+def _estimate_confidence(configs: List[Dict[str, Any]]) -> Tuple[float, str]:
+    if len(configs) <= 1:
+        return 0.2, "Only one configuration was available for this doctrine, so comparative confidence is necessarily low."
+
+    tensions = [float(stat["mean_final_tension"]) for stat in configs]
+    spread = max(tensions) - min(tensions)
+    unique_outcomes = {
+        outcome
+        for stat in configs
+        for outcome in stat.get("outcomes", {}).keys()
+    }
+    top_category_sets = {
+        tuple(
+            name for name, _ in sorted(
+                stat.get("aggregate_category_distribution", {}).items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:2]
+        )
+        for stat in configs
+    }
+
+    score = 0.25
+    if len(configs) >= 3:
+        score += 0.1
+    if spread >= 0.2:
+        score += 0.25
+    elif spread >= 0.1:
+        score += 0.15
+    elif spread >= 0.05:
+        score += 0.08
+    if len(unique_outcomes) >= 2:
+        score += 0.15
+    if len(top_category_sets) >= 2:
+        score += 0.12
+
+    score = min(score, 0.75)
+    rationale = (
+        f"Confidence is capped because each provider/model contributes only {configs[0]['n_runs']} run(s) here. "
+        f"Observed final-tension spread is {spread:.3f}; outcome diversity={len(unique_outcomes)}; "
+        f"distinct top-category patterns={len(top_category_sets)}."
+    )
+    return score, rationale
+
+
+def _confidence_label(score: float) -> str:
+    if score >= 0.67:
+        return "High"
+    if score >= 0.4:
+        return "Medium"
+    return "Low"
+
+
 # ── LaTeX Renderer ───────────────────────────────────────────────────────────
 
 class LaTeXRenderer:
@@ -398,6 +545,7 @@ class LaTeXRenderer:
             self._executive_summary(data, analyst),
             self._experiment_overview(data),
             self._configuration_summary(data),
+            self._doctrine_model_comparison(data, analyst),
             self._run_inventory(data),
             self._outcome_distribution(data),
             self._escalation_dynamics(data, analyst),
@@ -602,6 +750,78 @@ class LaTeXRenderer:
             r"    \bottomrule" + "\n"
             r"\end{longtable}"
         )
+
+    def _doctrine_model_comparison(self, data: Dict, analyst: Optional[Dict]) -> str:
+        grouped = _group_configurations_by_doctrine(data)
+        if not grouped:
+            return ""
+
+        analyst_entries = {}
+        if analyst and analyst.get("doctrine_model_comparisons"):
+            analyst_entries = {
+                entry["doctrine"]: entry
+                for entry in analyst["doctrine_model_comparisons"]
+            }
+
+        parts = [r"\section{Doctrine-by-Doctrine Model Comparison}"]
+
+        for doctrine in data["metadata"]["conditions"]:
+            doctrine_configs = grouped.get(doctrine, [])
+            if not doctrine_configs:
+                continue
+
+            parts.append(rf"\subsection{{{_tex_escape(doctrine)}}}")
+            analyst_entry = analyst_entries.get(doctrine)
+            if analyst_entry:
+                confidence = max(0.0, min(1.0, float(analyst_entry.get("confidence_score", 0.0))))
+                parts.append(_tex_escape(analyst_entry["comparison_summary"]))
+                parts.append(
+                    rf"\textbf{{Confidence:}} {_tex_escape(_confidence_label(confidence))} "
+                    rf"({confidence:.0%})\\"
+                )
+                parts.append(_tex_escape(analyst_entry["confidence_rationale"]))
+            else:
+                confidence, rationale = _estimate_confidence(doctrine_configs)
+                parts.append(_tex_escape(
+                    "Fallback comparison generated from observed outcome, tension, "
+                    "and action-mix differences across configurations."
+                ))
+                parts.append(
+                    rf"\textbf{{Confidence:}} {_tex_escape(_confidence_label(confidence))} "
+                    rf"({confidence:.0%})\\"
+                )
+                parts.append(_tex_escape(rationale))
+
+            rows = []
+            for stat in doctrine_configs:
+                outcome_str = ", ".join(
+                    f"{outcome}:{count}" for outcome, count in sorted(stat.get("outcomes", {}).items())
+                )
+                dfs = stat.get("dfs")
+                dfs_logic = f"{dfs['mean_logic']:.3f}" if dfs else "---"
+                rows.append(
+                    "        "
+                    f"{_tex_escape(stat['provider_name'])} & "
+                    f"{_tex_escape(stat['model_id'])} & "
+                    f"{stat['n_runs']} & "
+                    f"{_tex_escape(outcome_str or '---')} & "
+                    f"{stat['mean_final_tension']:.3f} & "
+                    f"{_tex_escape(_top_categories(stat))} & "
+                    f"{_tex_escape(dfs_logic)} \\\\"
+                )
+
+            parts.append(
+                r"\begin{longtable}{llrllll}" + "\n"
+                r"    \toprule" + "\n"
+                r"    Provider & Model & Runs & Outcome(s) & Final Tension & Top Categories & DFS Logic \\" + "\n"
+                r"    \midrule" + "\n"
+                r"    \endhead" + "\n"
+                + "\n".join(rows) + "\n"
+                + r"    \bottomrule" + "\n"
+                + r"\end{longtable}"
+            )
+
+        return "\n\n".join(parts)
 
     def _run_inventory(self, data: Dict) -> str:
         runs = data.get("run_inventory", [])

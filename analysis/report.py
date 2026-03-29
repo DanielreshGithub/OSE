@@ -22,6 +22,7 @@ from datetime import datetime
 from pathlib import Path
 
 from analysis.engine import AnalysisEngine
+from analysis.graphs import build_graph_assets
 from analysis.renderer import MarkdownRenderer, LaTeXRenderer
 
 
@@ -84,6 +85,9 @@ def generate_report(
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     base_name = f"{_build_report_stem(meta)}_{timestamp}"
 
+    print("Rendering graphs...")
+    report_data["graphs"] = build_graph_assets(report_data, output_path, base_name)
+
     print(f"  Scenario: {meta['scenario']}")
     print(f"  Conditions: {', '.join(meta['conditions'])}")
     print(f"  Providers: {', '.join(meta.get('providers', ['unknown']))}")
@@ -133,6 +137,7 @@ def generate_report(
         "by_doctrine": report_data["by_doctrine"],
         "by_configuration": report_data.get("by_configuration", {}),
         "run_inventory": report_data.get("run_inventory", []),
+        "graphs": report_data.get("graphs", []),
         "bci": report_data.get("bci"),
         "inflection_decisions": report_data.get("inflection_decisions", []),
         "analyst": analyst_sections,

@@ -604,6 +604,13 @@ class AnalysisEngine:
         self, runs: List[Dict], db_paths: List[str]
     ) -> Optional[Dict]:
         """Compute BCI if there are multiple runs per doctrine condition."""
+        unique_model_configs = {
+            (run["provider_name"], run["model_id"])
+            for run in runs
+        }
+        if len(unique_model_configs) > 1:
+            return None
+
         condition_db_map: Dict[str, List[str]] = defaultdict(list)
         for run in runs:
             condition_db_map[run["doctrine"]].append(run["db_path"])

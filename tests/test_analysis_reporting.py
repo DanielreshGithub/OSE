@@ -9,7 +9,7 @@ sys.dont_write_bytecode = True
 from analysis.__main__ import _normalize_args, main as analysis_main
 from analysis.analyst import _build_inflections_block, _build_statistics_block
 from analysis.engine import AnalysisEngine
-from analysis.report import main as report_main
+from analysis.report import generate_report, main as report_main
 from analysis.renderer import MarkdownRenderer
 from logs.logger import StructuredLogger
 from world.events import DecisionRecord, RunRecord, TurnLog
@@ -191,6 +191,44 @@ class AnalysisReportingTests(unittest.TestCase):
             use_latex=False,
             output_dir="reports",
         )
+
+    def test_generate_report_creates_graphs_and_skips_bci_for_single_runs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_paths = [
+                _write_sample_run(
+                    tmpdir,
+                    "run_gpt4o",
+                    "liberal",
+                    "openrouter",
+                    "openai/gpt-4o",
+                    "deterrence_success",
+                    0.24,
+                ),
+                _write_sample_run(
+                    tmpdir,
+                    "run_grok",
+                    "liberal",
+                    "openrouter",
+                    "x-ai/grok-4.1-fast",
+                    "frozen_conflict",
+                    0.48,
+                ),
+            ]
+            output_dir = Path(tmpdir) / "reports"
+            result = generate_report(db_paths=db_paths, output_dir=str(output_dir))
+
+            markdown = Path(result["markdown"]).read_text()
+            json_payload = Path(result["json"]).read_text()
+            asset_dir = Path(result["markdown"]).with_suffix("")
+            asset_root = Path(str(asset_dir) + "_assets")
+
+            self.assertTrue(asset_root.exists())
+            self.assertTrue(any(asset_root.glob("*.svg")))
+
+        self.assertIn("## Visual Summary", markdown)
+        self.assertIn("## Doctrine-by-Doctrine Model Comparison", markdown)
+        self.assertNotIn("## Behavioral Consistency Index (BCI)", markdown)
+        self.assertIn("graphs", json_payload)
 
 
 if __name__ == "__main__":

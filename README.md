@@ -15,17 +15,25 @@ LLM-driven geopolitical conflict simulation. State actors powered by real IR dec
 uv pip install -e ".[dev]"
 cp .env.example .env   # add keys
 
-# Run with Anthropic (default)
-python -m cli.run --scenario taiwan_strait --doctrine realist --turns 15
+# Run with Anthropic (default provider/model)
+ose realist --turns 15
 
 # Run with OpenRouter
-python -m cli.run --scenario taiwan_strait --doctrine liberal --provider openrouter --model openai/gpt-4o --turns 15
+ose liberal openai/gpt-5.4 --turns 15
 
-# Run batch experiments
-python -m experiments.runner --scenarios taiwan_strait --doctrines realist liberal constructivist --providers anthropic openrouter --turns 15
+# Run a batch for one provider/model
+python -m experiments.runner \
+  --scenario taiwan_strait \
+  --conditions realist liberal constructivist baseline \
+  --provider openrouter \
+  --model openai/gpt-5.4 \
+  --turns 15 \
+  --runs 3 \
+  --skip-scoring \
+  --skip-bci
 
 # Generate report
-python -m analysis --run-dir logs/runs/ --output reports/
+ose reports --runs logs/runs --output reports/
 ```
 
 ---
@@ -200,12 +208,12 @@ Six doctrine conditions control how actors reason. Assigned per run; the LLM mus
 
 | Condition | IR Theory | Core Logic |
 |---|---|---|
-| `baseline` | Rational Actor Model (Allison I) | Maximize expected utility. Explicit cost/benefit per action. |
 | `realist` | Structural Realism (Waltz/Mearsheimer) | Relative power maximization. Survival first. Balance threats. |
 | `liberal` | Liberal Institutionalism (Keohane) | Cooperation pays. Institutions and reputation constrain behaviour. |
+| `org_process` | Organizational Process (Allison II) | Organizational routines constrain choices. SOPs and satisficing dominate. |
 | `constructivist` | Constructivism (Wendt) | Identity and norms drive action. Audience costs are real. |
-| `prospect_theory` | Prospect Theory (Kahneman/Tversky) | Frame decisions as losses, not gains. Risk-acceptant when losing. |
-| `organizational` | Organizational Process (Allison II) | Organizational routines constrain choices. SOPs dominate. |
+| `marxist` | Marxist / Radical IR | Dependency, hierarchy, and capital autonomy frame the decision. |
+| `baseline` | Rational Actor Model (Allison I) | Maximize expected utility. Explicit cost/benefit per action. |
 
 ---
 
@@ -213,13 +221,12 @@ Six doctrine conditions control how actors reason. Assigned per run; the LLM mus
 
 | Category | Actions |
 |---|---|
-| Military | `mobilize` `strike` `advance` `withdraw` `blockade` `defensive_posture` `deploy_forward` |
-| Diplomatic | `negotiate` `form_alliance` `condemn` `intel_sharing` `multilateral_appeal` `expel_diplomats` |
-| Economic | `sanction` `embargo` `foreign_aid` `cut_supply` `asset_freeze` `supply_chain_diversion` |
-| Information | `propaganda` `disinformation` `hack_and_leak` `intel_operation` |
-| Coercive | `coercive_signaling` `nuclear_signaling` `hostage_taking` `proxy_support` |
-| Legal | `lawfare_filing` |
-| Standby | `hold_position` `monitor` `request_ceasefire` `war_termination` `alliance_burden_sharing` |
+| Military | `mobilize` `strike` `advance` `withdraw` `blockade` `defensive_posture` `probe` `signal_resolve` `deploy_forward` |
+| Diplomatic / Legal | `negotiate` `targeted_sanction` `comprehensive_sanction` `form_alliance` `condemn` `intel_sharing` `back_channel` `lawfare_filing` `multilateral_appeal` `expel_diplomats` |
+| Economic | `embargo` `foreign_aid` `cut_supply` `technology_restriction` `asset_freeze` `supply_chain_diversion` |
+| Information / Cyber | `propaganda` `partial_coercion` `cyber_operation` `hack_and_leak` |
+| Nuclear | `nuclear_signal` |
+| Standby | `hold_position` `monitor` |
 
 ---
 
@@ -227,7 +234,7 @@ Six doctrine conditions control how actors reason. Assigned per run; the LLM mus
 
 Each actor gets a 13-field capability vector derived from `WorldState` each turn. The LLM sees qualitative bands (HIGH / MEDIUM / LOW), never raw floats.
 
-Fields: `conventional_strength` · `naval_power` · `air_superiority` · `nuclear_capability` · `logistics_capacity` · `readiness` · `amphibious_capacity` · `a2ad_effectiveness` · `economic_strength` · `energy_independence` · `industrial_capacity` · `domestic_stability` · `international_standing`
+Fields: `local_naval_projection` · `local_air_projection` · `missile_a2ad_capability` · `cyber_capability` · `intelligence_quality` · `economic_coercion_capacity` · `alliance_leverage` · `logistics_endurance` · `domestic_stability` · `war_aversion` · `escalation_tolerance` · `bureaucratic_flexibility` · `signaling_credibility`
 
 ---
 
@@ -235,7 +242,7 @@ Fields: `conventional_strength` · `naval_power` · `air_superiority` · `nuclea
 
 Eight pressure dimensions track crisis dynamics independently of resource values.
 
-Dimensions: `military_tension` · `economic_coercion` · `diplomatic_isolation` · `information_warfare` · `domestic_instability` · `alliance_fracture` · `nuclear_risk` · `crisis_instability`
+Dimensions: `military_pressure` · `diplomatic_pressure` · `alliance_pressure` · `domestic_pressure` · `economic_pressure` · `informational_pressure` · `crisis_instability` · `uncertainty`
 
 ---
 
@@ -284,22 +291,38 @@ Automatic state mutations triggered after turn resolution.
 
 ```bash
 # Single run
-python -m cli.run --scenario taiwan_strait --doctrine realist --turns 15 --log-dir logs/runs/
+ose realist --turns 15 --log-dir logs/runs/
 
-# Compare doctrines, two providers
+# Compare doctrines for one provider/model
 python -m experiments.runner \
-  --scenarios taiwan_strait \
-  --doctrines realist liberal constructivist baseline \
-  --providers anthropic openrouter \
-  --model-openrouter openai/gpt-4o \
-  --turns 15 --runs-per-condition 3
+  --scenario taiwan_strait \
+  --conditions realist liberal constructivist baseline \
+  --provider openrouter \
+  --model openai/gpt-5.4 \
+  --turns 15 \
+  --runs 3
 
 # Query run log
-sqlite3 logs/runs/run_latest.db "SELECT actor_id, action_type, turn FROM decisions ORDER BY turn, actor_id;"
+sqlite3 logs/runs/<run_id>.db "SELECT turn, actor_short_name, json_extract(parsed_action, '$.action_type') AS action_type, validation_result FROM decisions ORDER BY turn, actor_short_name;"
 
 # Generate analysis report
-python -m analysis --run-dir logs/runs/ --output reports/ --format markdown
+python -m analysis --runs logs/runs --output reports/
+
+# Generate analysis report with Opus-backed narrative and LaTeX
+python -m analysis --runs logs/runs --llm --latex --output reports/
 ```
+
+Analytics and DFS scoring use the Anthropic API directly. To override the judge /
+analyst models, set one or more of:
+
+```bash
+OSE_ANALYTICS_MODEL=claude-opus-4-6
+OSE_SCORER_MODEL=claude-opus-4-6
+OSE_ANALYST_MODEL=claude-opus-4-6
+```
+
+Anthropic's direct API uses Claude-native model IDs like `claude-opus-4-6`,
+not OpenRouter-style names like `anthropic/claude-opus-4.6`.
 
 ---
 
@@ -327,12 +350,12 @@ ose/
 │   ├── events.py         # DecisionRecord · TurnLog · RunRecord
 │   ├── graph.py          # RelationshipGraph bilateral query wrapper
 │   ├── capabilities.py   # build_actor_capabilities() → 13-field vector
-│   └── pressure.py       # ScenarioPressureModel · 8-dimension pressure state
+│   └── pressures.py      # PressureState · contribution traces · banded view
 │
 ├── providers/
 │   ├── base.py           # LLMProvider ABC · ProviderCallResult dataclass
 │   ├── anthropic_provider.py   # tool_use · input_schema · cache tokens
-│   ├── openrouter_provider.py  # OpenAI-compat · function calling
+│   ├── openrouter_provider.py  # OpenAI-compat · tool / JSON compatibility fallbacks
 │   └── factory.py        # build_provider() · require_provider_env()
 │
 ├── actors/
@@ -349,27 +372,29 @@ ose/
 │   ├── cascade.py        # 9 cascade rules · escalatory + de-escalatory
 │   ├── costs.py          # Per-action resource depletion
 │   ├── perception.py     # Deterministic SHA-256 noise filter
-│   ├── events.py         # Pressure + capability gated event generator
+│   ├── event_generation.py # Pressure + capability gated event generator
 │   └── loop.py           # SimulationEngine · full turn lifecycle
 │
 ├── scenarios/
 │   ├── base.py           # ScenarioDefinition ABC
-│   └── taiwan_strait.py  # 4-actor Taiwan Strait · pressure-gated event pool
+│   └── taiwan_strait.py  # 4-actor Taiwan Strait · pressure-gated event templates
 │
 ├── scoring/
 │   ├── fidelity.py       # Doctrine Fidelity Score · LLM-as-judge
 │   └── bci.py            # Behavioral Consistency Index · entropy
 │
 ├── experiments/
-│   └── runner.py         # Batch orchestrator · multi-condition × multi-provider
+│   └── runner.py         # Batch orchestrator · multi-condition × repeated runs
 │
 ├── analysis/
 │   ├── engine.py         # Pure SQL + Python statistics
-│   ├── analyst.py        # Optional Sonnet qualitative layer
+│   ├── analyst.py        # Optional Anthropic qualitative layer (configurable)
+│   ├── graphs.py         # SVG graph asset generation
 │   ├── renderer.py       # Markdown + LaTeX dual output
 │   └── report.py         # CLI entry point
 │
 ├── cli/
+│   ├── ose.py            # Friendly launcher: run / batch / reports aliases
 │   └── run.py            # Entry point · --provider · --model · --doctrine flags
 │
 └── logs/

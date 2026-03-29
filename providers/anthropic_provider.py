@@ -19,6 +19,16 @@ from providers.base import LLMProvider, ProviderCallResult
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
 
+def _default_temperature() -> float:
+    raw = os.environ.get("OSE_DEFAULT_TEMPERATURE")
+    if raw in (None, ""):
+        return 0.0
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.0
+
+
 class AnthropicProvider(LLMProvider):
 
     def __init__(self, model: str = DEFAULT_MODEL):
@@ -59,7 +69,7 @@ class AnthropicProvider(LLMProvider):
             messages=[{"role": "user", "content": user_message}],
             tools=[anthropic_tool],
             tool_choice={"type": "auto"},
-            temperature=0,
+            temperature=_default_temperature(),
         )
 
         reasoning_parts = []

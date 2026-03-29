@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import defaultdict
 from typing import Any, Dict, Optional
 
 import anthropic
@@ -32,7 +33,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ANALYST_MODEL = "claude-sonnet-4-6"
+DEFAULT_ANALYST_MODEL = "claude-sonnet-4-6"
+ANALYST_MODEL = (
+    os.getenv("OSE_ANALYST_MODEL")
+    or os.getenv("OSE_ANALYTICS_MODEL")
+    or DEFAULT_ANALYST_MODEL
+)
 MAX_TOKENS = 4096
 
 # ── Analysis output tool schema ──────────────────────────────────────────────
@@ -84,6 +90,50 @@ ANALYSIS_TOOL = {
                     "3-4 paragraphs."
                 ),
             },
+            "doctrine_model_comparisons": {
+                "type": "array",
+                "description": (
+                    "One entry per doctrine condition comparing how the tested "
+                    "provider/model configurations handled that doctrine and how "
+                    "confident the analyst is in that comparison."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "doctrine": {
+                            "type": "string",
+                            "description": "Doctrine condition name.",
+                        },
+                        "comparison_summary": {
+                            "type": "string",
+                            "description": (
+                                "1-2 paragraphs comparing how different models handled "
+                                "this doctrine, citing concrete evidence from the run data."
+                            ),
+                        },
+                        "confidence_score": {
+                            "type": "number",
+                            "description": (
+                                "0.0–1.0 confidence in the comparison, based on sample "
+                                "size, separation between models, and clarity of evidence."
+                            ),
+                        },
+                        "confidence_rationale": {
+                            "type": "string",
+                            "description": (
+                                "Short explanation of why the confidence score is low, "
+                                "medium, or high."
+                            ),
+                        },
+                    },
+                    "required": [
+                        "doctrine",
+                        "comparison_summary",
+                        "confidence_score",
+                        "confidence_rationale",
+                    ],
+                },
+            },
             "methodology_notes": {
                 "type": "string",
                 "description": (
@@ -98,6 +148,7 @@ ANALYSIS_TOOL = {
             "escalation_dynamics",
             "turning_points",
             "cross_doctrine_findings",
+            "doctrine_model_comparisons",
             "methodology_notes",
         ],
     },
@@ -199,6 +250,58 @@ def _build_statistics_block(report_data: Dict[str, Any]) -> str:
                 f"n_runs={summary.get('n_runs')}"
             )
         lines.append("")
+    else:
+        lines.append("## Behavioral Consistency Index (BCI)")
+        lines.append(
+            "BCI omitted because the available report data does not contain repeated "
+            "runs per doctrine condition."
+        )
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _build_doctrine_model_block(report_data: Dict[str, Any]) -> str:
+    """Render per-doctrine model comparisons for the analyst prompt."""
+    configs = report_data.get("by_configuration", {})
+    if not configs:
+        return "# Doctrine-by-Doctrine Model Comparison\n\nNo configuration comparison data available."
+
+    grouped: Dict[str, list[Dict[str, Any]]] = defaultdict(list)
+    for stats in configs.values():
+        grouped[stats["doctrine"]].append(stats)
+
+    lines = ["# Doctrine-by-Doctrine Model Comparison", ""]
+    for doctrine, doctrine_stats in sorted(grouped.items()):
+        lines.append(f"## {doctrine}")
+        for stats in sorted(doctrine_stats, key=lambda item: (item["provider_name"], item["model_id"])):
+            top_categories = ", ".join(
+                f"{cat}: {share:.1%}"
+                for cat, share in sorted(
+                    stats.get("aggregate_category_distribution", {}).items(),
+                    key=lambda item: (-item[1], item[0]),
+                )[:3]
+            ) or "No action data"
+            top_actions = ", ".join(
+                f"{action}: {count}"
+                for action, count in sorted(
+                    stats.get("aggregate_action_distribution", {}).items(),
+                    key=lambda item: (-item[1], item[0]),
+                )[:5]
+            ) or "No action data"
+            lines.append(
+                f"- {stats['provider_name']} / {stats['model_id']}: "
+                f"runs={stats['n_runs']}, outcomes={json.dumps(stats['outcomes'])}, "
+                f"mean_final_tension={stats['mean_final_tension']}, "
+                f"top_categories=[{top_categories}], top_actions=[{top_actions}]"
+            )
+            dfs = stats.get("dfs")
+            if dfs:
+                lines.append(
+                    f"  DFS: language={dfs['mean_language']}, logic={dfs['mean_logic']}, "
+                    f"consistency={dfs['consistency_rate']}, contamination={dfs['contamination_rate']}"
+                )
+        lines.append("")
 
     return "\n".join(lines)
 
@@ -252,16 +355,18 @@ class LLMAnalyst:
         self._client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         self._model = model
 
-    def analyze(self, report_data: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    def analyze(self, report_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Generate qualitative analysis from ReportData.
 
         Returns a dict with keys: executive_summary, escalation_dynamics,
-        turning_points, cross_doctrine_findings, methodology_notes.
+        turning_points, cross_doctrine_findings, doctrine_model_comparisons,
+        methodology_notes.
 
         Returns None if the LLM call fails.
         """
         stats_block = _build_statistics_block(report_data)
+        doctrine_model_block = _build_doctrine_model_block(report_data)
         inflections_block = _build_inflections_block(
             report_data.get("inflection_decisions", [])
         )
@@ -281,13 +386,17 @@ class LLMAnalyst:
             "- Honest about limitations and small-N caveats\n"
             "- Written in academic prose suitable for a research report\n"
             "- Specific — reference concrete turn numbers, actor names, and metrics\n\n"
+            "For doctrine-by-doctrine model comparisons, produce one comparison entry "
+            "per doctrine. Compare only the models actually present in the data and "
+            "assign confidence conservatively when there is only one run per model.\n\n"
             "Do NOT hallucinate data points. If the statistics are sparse, say so. "
             "If patterns are ambiguous, acknowledge the ambiguity rather than "
             "forcing a narrative."
         )
 
         user_prompt = (
-            f"{stats_block}\n\n---\n\n{inflections_block}\n\n---\n\n"
+            f"{stats_block}\n\n---\n\n{doctrine_model_block}\n\n---\n\n"
+            f"{inflections_block}\n\n---\n\n"
             "Analyze this simulation experiment data. Call submit_analysis "
             "with your complete qualitative analysis."
         )

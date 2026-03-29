@@ -30,7 +30,12 @@ from world.events import DecisionRecord
 
 load_dotenv()
 
-SCORER_MODEL = "claude-haiku-4-5-20251001"  # Cost-efficient for bulk scoring
+DEFAULT_SCORER_MODEL = "claude-haiku-4-5-20251001"  # Cost-efficient for bulk scoring
+SCORER_MODEL = (
+    os.getenv("OSE_SCORER_MODEL")
+    or os.getenv("OSE_ANALYTICS_MODEL")
+    or DEFAULT_SCORER_MODEL
+)
 
 # ── Doctrine rubrics ──────────────────────────────────────────────────────────
 # Each rubric defines what language and logic patterns constitute fidelity

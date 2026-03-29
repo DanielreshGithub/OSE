@@ -39,6 +39,24 @@ SCENARIO_REGISTRY = {
 }
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _default_turns() -> int:
+    return _env_int("OSE_DEFAULT_TURNS", 10)
+
+
+def _default_seed() -> int:
+    return _env_int("OSE_SCENARIO_SEED", 0)
+
+
 def _load_scenario(name: str, seed: int = 0):
     if name not in SCENARIO_REGISTRY:
         print(f"Unknown scenario: {name}")
@@ -150,7 +168,7 @@ def classify_outcomes(db_paths: List[str]) -> Dict[str, int]:
     return counts
 
 
-def main(argv: list[str] | None = None):
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="OSE Experiment Runner — doctrine-condition × N-run batch executor"
     )
@@ -158,19 +176,19 @@ def main(argv: list[str] | None = None):
                         choices=list(SCENARIO_REGISTRY.keys()))
     parser.add_argument("--runs", type=int, default=5,
                         help="Number of runs per doctrine condition (default: 5)")
-    parser.add_argument("--turns", type=int, default=10,
-                        help="Turns per run (default: 10)")
+    parser.add_argument("--turns", type=int, default=_default_turns(),
+                        help=f"Turns per run (default: {_default_turns()})")
     parser.add_argument("--conditions", nargs="+", default=VALID_DOCTRINES,
                         choices=VALID_DOCTRINES,
-                        help="Doctrine conditions to run (default: all 4)")
+                        help="Doctrine conditions to run (default: all 6)")
     parser.add_argument("--experiment-id", default=None,
                         help="Experiment ID (default: auto-generated)")
     parser.add_argument("--log-dir", default="logs/experiments",
                         help="Root log directory (default: logs/experiments)")
     parser.add_argument("--delay", type=float, default=2.0,
                         help="Seconds to wait between runs (rate limiting, default: 2)")
-    parser.add_argument("--seed", type=int, default=0,
-                        help="Deterministic base seed for per-run derived seeds (default: 0)")
+    parser.add_argument("--seed", type=int, default=_default_seed(),
+                        help=f"Deterministic base seed for per-run derived seeds (default: {_default_seed()})")
     parser.add_argument("--provider", default="anthropic",
                         choices=VALID_PROVIDERS,
                         help="Decision LLM provider to use (default: anthropic)")
@@ -180,7 +198,11 @@ def main(argv: list[str] | None = None):
                         help="Skip DFS scoring after runs (run separately later)")
     parser.add_argument("--skip-bci", action="store_true",
                         help="Skip BCI computation after runs")
+    return parser
 
+
+def main(argv: list[str] | None = None):
+    parser = build_parser()
     args = parser.parse_args(argv)
 
     require_provider_env(args.provider)
@@ -205,7 +227,10 @@ def main(argv: list[str] | None = None):
     print(f"  Turns/run:   {args.turns}")
     print(f"  Total runs:  {total_runs}")
     print(f"  Base seed:   {args.seed}")
-    print(f"  Est. LLM calls: ~{est_calls} (decision) + ~{est_calls} (scoring)")
+    if args.skip_scoring:
+        print(f"  Est. LLM calls: ~{est_calls} (decision)")
+    else:
+        print(f"  Est. LLM calls: ~{est_calls} (decision) + ~{est_calls} (scoring)")
     print(f"  Log dir:     {log_dir}")
     print()
 

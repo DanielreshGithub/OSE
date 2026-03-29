@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Dict, Optional
 
 import openai
@@ -32,6 +33,121 @@ from providers.base import LLMProvider, ProviderCallResult
 
 DEFAULT_MODEL = "openai/gpt-4o"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_MAX_TOKENS = int(os.environ.get("OSE_OPENROUTER_MAX_TOKENS", "1024"))
+JSON_FALLBACK_MAX_TOKENS = int(os.environ.get("OSE_OPENROUTER_JSON_MAX_TOKENS", "384"))
+
+
+def _default_temperature() -> float:
+    raw = os.environ.get("OSE_DEFAULT_TEMPERATURE")
+    if raw in (None, ""):
+        return 0.0
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.0
+
+
+def _normalize_content(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("content") or ""))
+            else:
+                parts.append(str(getattr(item, "text", "") or getattr(item, "content", "") or ""))
+        return "\n".join(part for part in parts if part).strip()
+    return str(content)
+
+
+def _extract_first_json_object(text: str) -> Optional[Dict[str, Any]]:
+    if not text:
+        return None
+
+    candidate = text.strip()
+    if candidate.startswith("```"):
+        candidate = re.sub(r"^```(?:json)?\s*", "", candidate)
+        candidate = re.sub(r"\s*```$", "", candidate)
+
+    try:
+        parsed = json.loads(candidate)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    start = candidate.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape_next = False
+    for idx in range(start, len(candidate)):
+        ch = candidate[idx]
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\":
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    parsed = json.loads(candidate[start : idx + 1])
+                    if isinstance(parsed, dict):
+                        return parsed
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def _build_json_fallback_prompt(user_message: str) -> str:
+    return (
+        f"{user_message}\n\n"
+        "COMPATIBILITY OVERRIDE:\n"
+        "Return ONLY one valid JSON object and nothing else.\n"
+        "Do not include markdown, code fences, or numbered reasoning.\n"
+        "Required keys: action_type, rationale.\n"
+        "Optional keys: target_actor, target_zone, intensity, locality, "
+        "intent_annotation, communication_mode.\n"
+        "Use an action_type from the Available Actions list above.\n"
+        'Example: {"action_type":"monitor","intensity":"medium","rationale":"Brief reason."}'
+    )
+
+
+def _error_text(exc: Exception) -> str:
+    return str(exc).lower()
+
+
+def _tool_choice_unsupported(exc: Exception) -> bool:
+    text = _error_text(exc)
+    return "tool_choice" in text and (
+        "no endpoints found" in text
+        or "not support" in text
+        or "unsupported" in text
+    )
+
+
+def _tools_unsupported(exc: Exception) -> bool:
+    text = _error_text(exc)
+    return (
+        ("tools" in text or "tool calling" in text)
+        and ("not support" in text or "unsupported" in text or "no endpoints found" in text)
+    )
 
 
 class OpenRouterProvider(LLMProvider):
@@ -57,7 +173,6 @@ class OpenRouterProvider(LLMProvider):
         user_message: str,
         action_tool_schema: Dict[str, Any],
     ) -> ProviderCallResult:
-        # Canonical schema IS already OpenAI function format — wrap in tools list
         tool = {
             "type": "function",
             "function": {
@@ -67,35 +182,95 @@ class OpenRouterProvider(LLMProvider):
             },
         }
 
-        response = self._client.chat.completions.create(
-            model=self._model,
-            max_tokens=2048,
-            temperature=0,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            tools=[tool],
-            tool_choice={"type": "function", "function": {"name": "submit_action"}},
+        base_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+
+        # 1. Preferred path: force a function call for strong tool-capable models.
+        try:
+            response = self._create_completion(
+                messages=base_messages,
+                tools=[tool],
+                tool_choice={"type": "function", "function": {"name": "submit_action"}},
+                max_tokens=DEFAULT_MAX_TOKENS,
+            )
+            result = self._build_result(response, strategy="forced_tool_choice")
+            if result.action_dict is not None:
+                return result
+        except Exception as exc:
+            if not _tool_choice_unsupported(exc):
+                if not _tools_unsupported(exc):
+                    raise
+            else:
+                # Continue to softer strategies below.
+                pass
+
+        # 2. Fallback: provide tools, but let the route choose how to call them.
+        try:
+            response = self._create_completion(
+                messages=base_messages,
+                tools=[tool],
+                max_tokens=DEFAULT_MAX_TOKENS,
+            )
+            result = self._build_result(response, strategy="auto_tools")
+            if result.action_dict is not None:
+                return result
+        except Exception as exc:
+            if not _tools_unsupported(exc):
+                raise
+
+        # 3. Last resort: plain JSON content. This keeps weak/tool-fragile models usable.
+        json_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": _build_json_fallback_prompt(user_message)},
+        ]
+        response = self._create_completion(
+            messages=json_messages,
+            max_tokens=JSON_FALLBACK_MAX_TOKENS,
         )
+        return self._build_result(response, strategy="json_content")
 
+    def _create_completion(
+        self,
+        *,
+        messages: list[Dict[str, str]],
+        max_tokens: int,
+        tools: Optional[list[Dict[str, Any]]] = None,
+        tool_choice: Optional[Dict[str, Any]] = None,
+    ):
+        kwargs: Dict[str, Any] = {
+            "model": self._model,
+            "max_tokens": max_tokens,
+            "temperature": _default_temperature(),
+            "messages": messages,
+        }
+        if tools is not None:
+            kwargs["tools"] = tools
+        if tool_choice is not None:
+            kwargs["tool_choice"] = tool_choice
+        return self._client.chat.completions.create(**kwargs)
+
+    def _build_result(self, response: Any, strategy: str) -> ProviderCallResult:
         message = response.choices[0].message
+        reasoning_trace = _normalize_content(message.content)
 
-        # Reasoning trace — text content before the function call
-        reasoning_trace = message.content or ""
-
-        # Parse function call
         action_dict: Optional[Dict[str, Any]] = None
-        if message.tool_calls:
+        if getattr(message, "tool_calls", None):
             raw_args = message.tool_calls[0].function.arguments
             try:
                 action_dict = json.loads(raw_args)
             except json.JSONDecodeError:
                 action_dict = None
 
-        # Fallback: pull reasoning from rationale if model wrote nothing in content
+        if action_dict is None and reasoning_trace:
+            action_dict = _extract_first_json_object(reasoning_trace)
+
         if not reasoning_trace and action_dict:
-            reasoning_trace = action_dict.get("rationale", "")
+            reasoning_trace = (
+                action_dict.get("reasoning_trace")
+                or action_dict.get("rationale", "")
+            )
 
         usage = {}
         if getattr(response, "usage", None) is not None:
@@ -104,6 +279,8 @@ class OpenRouterProvider(LLMProvider):
                 for key in ("prompt_tokens", "completion_tokens", "total_tokens")
                 if getattr(response.usage, key, None) is not None
             }
+        usage["compatibility_strategy"] = strategy
+        usage["finish_reason"] = getattr(response.choices[0], "finish_reason", None)
 
         if hasattr(response, "model_dump_json"):
             raw_response = response.model_dump_json(indent=2)

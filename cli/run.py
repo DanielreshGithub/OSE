@@ -13,6 +13,7 @@ Providers: anthropic | openrouter
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import uuid
 
@@ -26,6 +27,28 @@ SCENARIO_REGISTRY = {
 }
 
 VALID_DOCTRINES = ["realist", "liberal", "org_process", "constructivist", "marxist", "baseline"]
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _default_turns() -> int:
+    return _env_int("OSE_DEFAULT_TURNS", 10)
+
+
+def _default_log_dir() -> str:
+    return os.getenv("OSE_LOG_DIR", "logs/runs")
+
+
+def _default_seed() -> int:
+    return _env_int("OSE_SCENARIO_SEED", 0)
 
 
 def load_scenario(name: str, seed: int = 0):
@@ -59,8 +82,8 @@ Doctrine conditions:
         help="Scenario to run (default: taiwan_strait)",
     )
     parser.add_argument(
-        "--turns", type=int, default=10,
-        help="Maximum number of turns (default: 10)",
+        "--turns", type=int, default=_default_turns(),
+        help=f"Maximum number of turns (default: {_default_turns()})",
     )
     parser.add_argument(
         "--doctrine", default="baseline",
@@ -68,16 +91,16 @@ Doctrine conditions:
         help="Decision doctrine condition (default: baseline)",
     )
     parser.add_argument(
-        "--log-dir", default="logs/runs",
-        help="Directory for SQLite run logs (default: logs/runs)",
+        "--log-dir", default=_default_log_dir(),
+        help=f"Directory for SQLite run logs (default: {_default_log_dir()})",
     )
     parser.add_argument(
         "--run-id", default=None,
         help="Run ID override (default: auto-generated)",
     )
     parser.add_argument(
-        "--seed", type=int, default=0,
-        help="Deterministic seed for scenario evolution and perception (default: 0)",
+        "--seed", type=int, default=_default_seed(),
+        help=f"Deterministic seed for scenario evolution and perception (default: {_default_seed()})",
     )
     parser.add_argument(
         "--provider", default="anthropic",
