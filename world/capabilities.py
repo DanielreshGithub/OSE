@@ -36,6 +36,7 @@ class CapabilityVector(BaseModel):
     escalation_tolerance: float = Field(ge=0.0, le=1.0)
     bureaucratic_flexibility: float = Field(ge=0.0, le=1.0)
     signaling_credibility: float = Field(ge=0.0, le=1.0)
+    theater_access: float = Field(default=0.5, ge=0.0, le=1.0)
 
     model_config = {"extra": "forbid"}
 
@@ -61,6 +62,10 @@ class CapabilityVector(BaseModel):
             field_name: self.band(getattr(self, field_name))
             for field_name in self.__class__.model_fields
         }
+
+    def bands(self) -> Dict[str, CapabilityBand]:
+        """Alias for as_bands() — used by scenario_template and event_generation."""
+        return self.as_bands()
 
     def as_numeric(self) -> Dict[str, float]:
         """Return a plain numeric mapping for engine-side use."""

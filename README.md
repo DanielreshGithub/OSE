@@ -1,6 +1,6 @@
 # OSE — Omni-Simulation Engine
 
-**Status:** Active | **Version:** v0.4
+**Status:** Active | **Version:** v0.1.0
 
 OSE is an LLM-driven geopolitical crisis simulation framework. Each actor is assigned an IR doctrine, chooses one action per turn from a constrained action menu, and the engine resolves all actions simultaneously against a bounded world state.
 
@@ -34,25 +34,47 @@ Add at least one provider key to `.env`:
 
 ## Quick Start
 
+OSE is model-agnostic. Any model string is a drop-in — Anthropic natively, or any of the 200+ models on OpenRouter. The launcher infers the provider automatically from the model string: a `/` means OpenRouter, no `/` means Anthropic.
+
 ### Single Run
 
-Anthropic default model:
+Anthropic (default model):
 
 ```bash
-python3 ose realist --turns 5
+python3 ose realist --turns 10
 ```
 
-OpenRouter model:
+Anthropic (specific model):
 
 ```bash
-python3 ose liberal openai/gpt-5.4 --turns 5 --seed 0
+python3 ose realist claude-opus-4-6 --turns 10
 ```
 
-Another OpenRouter model:
+OpenRouter — GPT-4o:
 
 ```bash
-python3 ose constructivist meta-llama/llama-4-maverick --turns 5 --seed 0
+python3 ose liberal openai/gpt-4o --turns 10 --seed 0
 ```
+
+OpenRouter — Gemini:
+
+```bash
+python3 ose constructivist google/gemini-2.5-pro-preview --turns 10 --seed 0
+```
+
+OpenRouter — Llama:
+
+```bash
+python3 ose baseline meta-llama/llama-3.1-405b-instruct --turns 10 --seed 0
+```
+
+OpenRouter — DeepSeek:
+
+```bash
+python3 ose realist deepseek/deepseek-r1 --turns 10 --seed 0
+```
+
+You can pass any OpenRouter model ID directly. If the model has known tool-call limitations, OSE routes it automatically to the correct fallback strategy (see [OpenRouter Compatibility](#openrouter-compatibility)).
 
 ### Generate Reports
 
@@ -74,10 +96,10 @@ python3 ose reports --runs logs/runs --llm --latex --output reports/
 python3 ose batch \
   --scenario taiwan_strait \
   --provider openrouter \
-  --model openai/gpt-5.4 \
+  --model openai/gpt-4o \
   --conditions realist liberal constructivist baseline \
   --runs 3 \
-  --turns 5 \
+  --turns 12 \
   --skip-scoring \
   --skip-bci
 ```
@@ -86,7 +108,7 @@ python3 ose batch \
 
 ```mermaid
 flowchart TD
-    WS([World State]) --> CAP[Capability Builder\n13-field normalized vector]
+    WS([World State]) --> CAP[Capability Builder\n14-field normalized vector]
     WS --> PRES[Pressure Model\n8-dimension pressure state]
     CAP --> PF[Perception Filter\nnoise scaled to actor intel quality]
     PRES --> PF
@@ -250,18 +272,54 @@ The top-level launcher is intentionally simple:
 - `python3 ose reports ...`
 - `python3 ose batch ...`
 
-Provider inference:
+**Provider inference — you never have to type `--provider`:**
 
-- model string contains `/` -> defaults to `openrouter`
-- model string without `/` -> defaults to `anthropic`
+| Model string | Inferred provider |
+|---|---|
+| Contains `/` (e.g. `openai/gpt-4o`) | `openrouter` |
+| No `/` (e.g. `claude-sonnet-4-6`) | `anthropic` |
 
-Examples:
+You can always override explicitly with `--provider anthropic` or `--provider openrouter`.
+
+**Model string is pass-through.** Any model ID that OpenRouter supports works unchanged:
 
 ```bash
-python3 ose realist claude-sonnet-4-6 --turns 5
-python3 ose marxist deepseek/deepseek-v3.2 --turns 5
-python3 ose baseline x-ai/grok-4.20-beta --turns 5
+# Anthropic native
+python3 ose realist claude-sonnet-4-6 --turns 10
+python3 ose realist claude-opus-4-6 --turns 10
+
+# OpenAI via OpenRouter
+python3 ose liberal openai/gpt-4o --turns 10
+python3 ose liberal openai/gpt-4o-mini --turns 10
+
+# Google via OpenRouter
+python3 ose constructivist google/gemini-2.5-pro-preview --turns 10
+python3 ose constructivist google/gemini-2.0-flash-001 --turns 10
+
+# Meta via OpenRouter
+python3 ose baseline meta-llama/llama-3.1-405b-instruct --turns 10
+
+# DeepSeek via OpenRouter
+python3 ose marxist deepseek/deepseek-r1 --turns 10
+
+# xAI via OpenRouter
+python3 ose baseline x-ai/grok-3-beta --turns 10
+
+# Mistral via OpenRouter
+python3 ose org_process mistralai/mistral-large --turns 10
 ```
+
+## OpenRouter Compatibility
+
+OSE handles tool-call variation across models automatically using a three-tier fallback:
+
+1. **forced_tool_choice** — preferred; forces the model to emit a structured function call
+2. **auto_tools** — provides the tool schema but lets the model decide how to call it
+3. **json_content** — plain JSON output with no tool schema; used when tool calling is unavailable
+
+Models known to lack tool support are pre-mapped and skip straight to `json_content` without wasting API calls on failed attempts. Unknown models are assumed to support `forced_tool_choice` and fall back gracefully on error.
+
+If a model produces an unparseable response after all fallbacks, OSE retries up to 2 times, then falls back to `hold_position` for that actor on that turn.
 
 ## Doctrine Conditions
 
@@ -313,9 +371,9 @@ OSE is bounded, not freeform:
 
 ## Capability and Pressure Layers
 
-Each actor gets a 13-field capability vector, shown to the model as qualitative bands:
+Each actor gets a 14-field capability vector, shown to the model as qualitative bands:
 
-`local_naval_projection`, `local_air_projection`, `missile_a2ad_capability`, `cyber_capability`, `intelligence_quality`, `economic_coercion_capacity`, `alliance_leverage`, `logistics_endurance`, `domestic_stability`, `war_aversion`, `escalation_tolerance`, `bureaucratic_flexibility`, `signaling_credibility`
+`local_naval_projection`, `local_air_projection`, `missile_a2ad_capability`, `cyber_capability`, `intelligence_quality`, `economic_coercion_capacity`, `alliance_leverage`, `logistics_endurance`, `domestic_stability`, `war_aversion`, `escalation_tolerance`, `bureaucratic_flexibility`, `signaling_credibility`, `theater_access`
 
 Each turn also computes an 8-field pressure state:
 
@@ -413,21 +471,41 @@ OSE_DEFAULT_TEMPERATURE=0
 OSE_SCENARIO_SEED=0
 ```
 
-OpenRouter compatibility tuning:
+Prompt verbosity — controls how much actor backstory is injected per call:
 
 ```bash
-OSE_OPENROUTER_MAX_TOKENS=1024
-OSE_OPENROUTER_JSON_MAX_TOKENS=384
+# full (default) ~3000 tokens — best fidelity for final research runs
+# compact        ~1500 tokens — trimmed backstory, no history — good for bulk runs
+# minimal        ~800 tokens  — goals + red lines + doctrine only
+OSE_PROMPT_MODE=compact
 ```
+
+OpenRouter output token limits:
+
+```bash
+OSE_OPENROUTER_MAX_TOKENS=768       # default per-call output limit
+OSE_OPENROUTER_JSON_MAX_TOKENS=256  # limit for json_content fallback calls
+```
+
+## Installed Scripts
+
+After `uv pip install -e ".[dev]"`, four scripts are available system-wide:
+
+| Script | Equivalent | Purpose |
+|---|---|---|
+| `ose` | `python3 ose` | Main launcher (run / batch / reports) |
+| `ose-run` | `python -m cli.run` | Direct single-run CLI |
+| `ose-report` | `python -m analysis.report` | Report generator |
+| `ose-analyze` | `python -m analysis` | Analysis entrypoint |
 
 ## Advanced / Internal Entry Points
 
-If you want to bypass the `ose` launcher, these still work:
+If you want to bypass the `ose` launcher, the module entry points still work:
 
 ```bash
 python -m cli.run --help
 python -m experiments.runner --help
-python -m analysis --help
+python -m analysis.report --help
 ```
 
 The launcher is the recommended public interface. The module entry points are lower-level.
@@ -449,8 +527,8 @@ cli/           launcher and lower-level CLIs
 
 ## Known Limitations
 
-- OpenRouter compatibility varies by model and route. OSE has fallbacks, but not every model is equally reliable.
-- Even at `temperature=0`, provider-side nondeterminism can still appear.
-- The current benchmark focus is the Taiwan Strait scenario; the framework is extensible but still scenario-light.
+- OSE is model-agnostic, but output quality varies. Models that ignore the action schema or produce freeform text will fall back to `hold_position` after retries — visible in logs as `validation_result: fallback`.
+- Even at `temperature=0`, provider-side nondeterminism can still appear (especially on OpenRouter where routing may shift between requests).
+- The current benchmark is the Taiwan Strait scenario; the framework is extensible but still scenario-light.
 - BCI is only meaningful for repeated same-model runs, not one-off model sweeps.
 - Provider-side model updates can change outputs over time, even with identical prompts and seeds.

@@ -345,7 +345,13 @@ class SimulationEngine:
 
         details = {
             "war_failure": self.state.crisis_phase == "war" and self.state.global_tension >= 0.90,
-            "deescalation_success": self.state.crisis_phase in ("peacetime", "tension") and self.state.global_tension <= 0.30,
+            # Minimum 3 turns before de-escalation can terminate — prevents spurious
+            # early-exit when all actors cooperate on turn 0-1.
+            "deescalation_success": (
+                self.state.turn >= 3
+                and self.state.crisis_phase in ("peacetime", "tension")
+                and self.state.global_tension <= 0.30
+            ),
             "all_passive_for_three_turns": False,
             "per_actor_passive_streaks": {},
         }

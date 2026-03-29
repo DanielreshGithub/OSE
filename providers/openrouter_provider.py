@@ -33,8 +33,30 @@ from providers.base import LLMProvider, ProviderCallResult
 
 DEFAULT_MODEL = "openai/gpt-4o"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_MAX_TOKENS = int(os.environ.get("OSE_OPENROUTER_MAX_TOKENS", "1024"))
-JSON_FALLBACK_MAX_TOKENS = int(os.environ.get("OSE_OPENROUTER_JSON_MAX_TOKENS", "384"))
+DEFAULT_MAX_TOKENS = int(os.environ.get("OSE_OPENROUTER_MAX_TOKENS", "768"))
+JSON_FALLBACK_MAX_TOKENS = int(os.environ.get("OSE_OPENROUTER_JSON_MAX_TOKENS", "256"))
+
+# Known model capability levels — avoids paying for failed strategy attempts.
+#   "tool_choice" = supports forced function call (preferred, default)
+#   "tools"       = supports tools list but not forced tool_choice
+#   "json"        = no tool support; use plain JSON content fallback directly
+# Models not listed are assumed "tool_choice" (full capability).
+MODEL_CAPABILITY_MAP: Dict[str, str] = {
+    # Confirmed tool-call broken on OpenRouter as of 2026-03:
+    "qwen/qwen3-235b-a22b":      "json",
+    "x-ai/grok-4.2":             "json",
+    # DeepSeek R1: supports tools but tool_choice=forced is unreliable:
+    "deepseek/deepseek-r1-0528": "tools",
+    "deepseek/deepseek-r1":      "tools",
+}
+
+# Per-model output token overrides — smaller/faster models don't need 768 tokens.
+MODEL_MAX_TOKENS_MAP: Dict[str, int] = {
+    "openai/gpt-4o-mini":              512,
+    "google/gemini-2.0-flash-001":     512,
+    "google/gemini-flash-1.5":         512,
+    "meta-llama/llama-3.1-8b-instruct": 384,
+}
 
 
 def _default_temperature() -> float:
@@ -167,12 +189,23 @@ class OpenRouterProvider(LLMProvider):
     def provider_name(self) -> str:
         return "openrouter"
 
+    def _capability(self) -> str:
+        """Return the known capability level for this model."""
+        return MODEL_CAPABILITY_MAP.get(self._model, "tool_choice")
+
+    def _max_tokens(self) -> int:
+        """Return per-model output token limit, falling back to global default."""
+        return MODEL_MAX_TOKENS_MAP.get(self._model, DEFAULT_MAX_TOKENS)
+
     def call(
         self,
         system_prompt: str,
         user_message: str,
         action_tool_schema: Dict[str, Any],
     ) -> ProviderCallResult:
+        capability = self._capability()
+        max_tokens = self._max_tokens()
+
         tool = {
             "type": "function",
             "function": {
@@ -187,31 +220,55 @@ class OpenRouterProvider(LLMProvider):
             {"role": "user", "content": user_message},
         ]
 
-        # 1. Preferred path: force a function call for strong tool-capable models.
-        try:
+        # Skip straight to json_content for known tool-incapable models.
+        if capability == "json":
+            json_messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": _build_json_fallback_prompt(user_message)},
+            ]
             response = self._create_completion(
-                messages=base_messages,
-                tools=[tool],
-                tool_choice={"type": "function", "function": {"name": "submit_action"}},
-                max_tokens=DEFAULT_MAX_TOKENS,
+                messages=json_messages,
+                max_tokens=JSON_FALLBACK_MAX_TOKENS,
             )
-            result = self._build_result(response, strategy="forced_tool_choice")
-            if result.action_dict is not None:
-                return result
-        except Exception as exc:
-            if not _tool_choice_unsupported(exc):
-                if not _tools_unsupported(exc):
-                    raise
-            else:
-                # Continue to softer strategies below.
-                pass
+            return self._build_result(response, strategy="json_content")
 
-        # 2. Fallback: provide tools, but let the route choose how to call them.
+        # 1. Preferred path: force a function call for strong tool-capable models.
+        if capability == "tool_choice":
+            try:
+                response = self._create_completion(
+                    messages=base_messages,
+                    tools=[tool],
+                    tool_choice={"type": "function", "function": {"name": "submit_action"}},
+                    max_tokens=max_tokens,
+                )
+                result = self._build_result(response, strategy="forced_tool_choice")
+                if result.action_dict is not None:
+                    return result
+            except Exception as exc:
+                if not _tool_choice_unsupported(exc):
+                    if not _tools_unsupported(exc):
+                        raise
+                    # tools not supported at all — drop to json_content
+                    capability = "json"
+                # tool_choice not supported — try auto_tools next
+
+        if capability == "json":
+            json_messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": _build_json_fallback_prompt(user_message)},
+            ]
+            response = self._create_completion(
+                messages=json_messages,
+                max_tokens=JSON_FALLBACK_MAX_TOKENS,
+            )
+            return self._build_result(response, strategy="json_content")
+
+        # 2. Fallback: provide tools list, let the model decide how to call.
         try:
             response = self._create_completion(
                 messages=base_messages,
                 tools=[tool],
-                max_tokens=DEFAULT_MAX_TOKENS,
+                max_tokens=max_tokens,
             )
             result = self._build_result(response, strategy="auto_tools")
             if result.action_dict is not None:
@@ -220,7 +277,7 @@ class OpenRouterProvider(LLMProvider):
             if not _tools_unsupported(exc):
                 raise
 
-        # 3. Last resort: plain JSON content. This keeps weak/tool-fragile models usable.
+        # 3. Last resort: plain JSON content.
         json_messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": _build_json_fallback_prompt(user_message)},

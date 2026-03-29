@@ -18,10 +18,25 @@ Doctrine conditions:
   "baseline"    — Rational Actor Model (Allison Model I): unitary optimizer, pure goal/cost utility calculation
 """
 from __future__ import annotations
+import os
 from pathlib import Path
 from world.state import Actor, WorldState
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+# Prompt verbosity mode — controls how much of the actor's backstory is injected.
+#   full    — everything (best doctrine fidelity, highest token cost)
+#   compact — war_aversion + constraints trimmed to ~200 chars; history omitted
+#   minimal — only goals, red lines, and doctrine (lowest cost)
+# Set via OSE_PROMPT_MODE env var or override at runtime.
+OSE_PROMPT_MODE = os.environ.get("OSE_PROMPT_MODE", "full")
+
+
+def _trim(text: str, max_chars: int) -> str:
+    """Truncate a text block to max_chars, appending '…' if cut."""
+    if not text or len(text) <= max_chars:
+        return text
+    return text[:max_chars].rsplit(" ", 1)[0] + " …"
 
 DOCTRINE_INSTRUCTIONS: dict[str, str] = {
     "realist": """
@@ -111,11 +126,20 @@ When reasoning, explicitly state: (a) your current highest-priority reachable go
 }
 
 
-def build_persona_prompt(actor: Actor, doctrine_condition: str) -> str:
+def build_persona_prompt(
+    actor: Actor,
+    doctrine_condition: str,
+    prompt_mode: str = OSE_PROMPT_MODE,
+) -> str:
     """
     Build the system prompt for an actor under a given doctrine condition.
 
     This prompt is stable across turns — suitable for Anthropic prompt caching.
+
+    prompt_mode controls verbosity:
+      "full"    — complete backstory injected (best fidelity, ~3000 tokens)
+      "compact" — war_aversion/constraints trimmed; history omitted (~1500 tokens)
+      "minimal" — only goals, red lines, doctrine (~800 tokens)
     """
     template = (_PROMPTS_DIR / "system.txt").read_text()
 
@@ -133,6 +157,22 @@ def build_persona_prompt(actor: Actor, doctrine_condition: str) -> str:
         DOCTRINE_INSTRUCTIONS["baseline"]
     )
 
+    if prompt_mode == "minimal":
+        war_aversion = "War carries catastrophic costs. Escalation requires explicit justification."
+        historical_precedents = "Refer to your known historical behavioral patterns."
+        institutional_constraints = "You operate within your state's institutional decision-making process."
+        cognitive_patterns = "You carry the typical biases and heuristics of your state's strategic culture."
+    elif prompt_mode == "compact":
+        war_aversion = _trim(actor.war_aversion or "", 250) or "War carries severe domestic and material costs."
+        historical_precedents = "Refer to your known historical behavioral patterns."
+        institutional_constraints = _trim(actor.institutional_constraints or "", 250) or "Standard institutional process applies."
+        cognitive_patterns = _trim(actor.cognitive_patterns or "", 200) or "Standard cognitive biases apply."
+    else:  # full
+        war_aversion = actor.war_aversion or "No specific war aversion factors specified."
+        historical_precedents = actor.historical_precedents or "No historical precedents specified."
+        institutional_constraints = actor.institutional_constraints or "No institutional constraints specified."
+        cognitive_patterns = actor.cognitive_patterns or "No cognitive patterns specified."
+
     return template.format(
         actor_name=actor.name,
         actor_short_name=actor.short_name,
@@ -142,9 +182,9 @@ def build_persona_prompt(actor: Actor, doctrine_condition: str) -> str:
         decision_style=actor.decision_style,
         goals=goals_block,
         red_lines=red_lines_block,
-        war_aversion=actor.war_aversion or "No specific war aversion factors specified.",
-        historical_precedents=actor.historical_precedents or "No historical precedents specified.",
-        institutional_constraints=actor.institutional_constraints or "No institutional constraints specified.",
-        cognitive_patterns=actor.cognitive_patterns or "No cognitive patterns specified.",
+        war_aversion=war_aversion,
+        historical_precedents=historical_precedents,
+        institutional_constraints=institutional_constraints,
+        cognitive_patterns=cognitive_patterns,
         doctrine_instructions=doctrine_text,
     )

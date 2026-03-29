@@ -239,6 +239,16 @@ def evaluate_action_constraints(
             if current > maximum:
                 reasons.append(f"{field_name} exceeds maximum pressure {maximum:.2f} (have {current:.2f}).")
 
+    # Check visibility / intelligence requirements (structural guards)
+    if constraint.requires_visibility:
+        intel = float(getattr(capabilities, "intelligence_quality", 0.0))
+        if intel < 0.10:
+            reasons.append(f"requires_visibility: intelligence_quality below 0.10 (have {intel:.2f}).")
+    if constraint.requires_intelligence:
+        intel = float(getattr(capabilities, "intelligence_quality", 0.0))
+        if intel < 0.20:
+            reasons.append(f"requires_intelligence: intelligence_quality below 0.20 (have {intel:.2f}).")
+
     return FeasibilityResult(
         eligible=not reasons,
         reasons=reasons,

@@ -15,7 +15,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
 
-from engine.scenario_template import CapabilityVector, ScenarioPressureState
+from world.capabilities import CapabilityVector
+from engine.scenario_template import ScenarioPressureState
 from world.events import GlobalEvent
 from world.state import WorldState
 

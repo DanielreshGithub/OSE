@@ -259,7 +259,9 @@ class ProviderIntegrationTests(unittest.TestCase):
             )
 
         self.assertEqual(result.action_dict["action_type"], "monitor")
-        self.assertEqual(result.usage["compatibility_strategy"], "auto_tools")
+        # qwen3-235b-a22b is in MODEL_CAPABILITY_MAP as "json" —
+        # it now skips tool-call attempts and goes straight to json_content.
+        self.assertEqual(result.usage["compatibility_strategy"], "json_content")
 
     def test_openrouter_provider_falls_back_to_json_content(self):
         os.environ["OPENROUTER_API_KEY"] = "test-key"

@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from world.capabilities import CapabilityVector  # canonical — no local duplicate
 from world.events import GlobalEvent
 from world.state import WorldState
 
@@ -37,26 +38,6 @@ def _band(value: float) -> str:
     if value >= 0.33:
         return "MEDIUM"
     return "LOW"
-
-
-class CapabilityVector(BaseModel):
-    local_naval_projection: float = Field(ge=0.0, le=1.0)
-    local_air_projection: float = Field(ge=0.0, le=1.0)
-    missile_a2ad: float = Field(ge=0.0, le=1.0)
-    cyber_capability: float = Field(ge=0.0, le=1.0)
-    intelligence_quality: float = Field(ge=0.0, le=1.0)
-    economic_coercion_capacity: float = Field(ge=0.0, le=1.0)
-    alliance_leverage: float = Field(ge=0.0, le=1.0)
-    logistics_endurance: float = Field(ge=0.0, le=1.0)
-    domestic_stability: float = Field(ge=0.0, le=1.0)
-    war_aversion: float = Field(ge=0.0, le=1.0)
-    escalation_tolerance: float = Field(ge=0.0, le=1.0)
-    bureaucratic_flexibility: float = Field(ge=0.0, le=1.0)
-    signaling_credibility: float = Field(ge=0.0, le=1.0)
-    theater_access: float = Field(ge=0.0, le=1.0)
-
-    def bands(self) -> Dict[str, str]:
-        return {name: _band(getattr(self, name)) for name in self.__class__.model_fields}
 
 
 class ScenarioPressureState(BaseModel):
@@ -280,7 +261,7 @@ class OpenEndedScenarioTemplate:
             profiles[actor_id] = CapabilityVector(
                 local_naval_projection=_clamp(actor.military.naval_power * theater_access),
                 local_air_projection=_clamp(actor.military.air_superiority * theater_access),
-                missile_a2ad=_clamp(actor.military.a2ad_effectiveness),
+                missile_a2ad_capability=_clamp(actor.military.a2ad_effectiveness),
                 cyber_capability=_clamp(
                     (actor.economic.industrial_capacity * 0.45)
                     + (actor.information_quality * 0.35)
