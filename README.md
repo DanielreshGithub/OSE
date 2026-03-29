@@ -1,6 +1,6 @@
 # OSE — Omni-Simulation Engine
 
-**Status:** Active | **Version:** v0.4 | **Started:** 2026-03-26
+**Status:** Active | **Version:** v0.4
 
 LLM-driven geopolitical conflict simulation. State actors powered by real IR decision doctrines. Outcomes emerge from LLM reasoning, not scripted rules.
 
