@@ -2,6 +2,8 @@
 
 **Status:** Active | **Version:** v0.1.0
 
+**UNDER WORK AS OF 30th Of March 2026**
+
 OSE is an LLM-driven geopolitical crisis simulation framework. Each actor is assigned an IR doctrine, chooses one action per turn from a constrained action menu, and the engine resolves all actions simultaneously against a bounded world state.
 
 **Research thesis:** if you force the same model to reason through different doctrines, do you get measurably different crisis behavior?
