@@ -23,6 +23,27 @@ PASSIVE_ACTIONS = {
     "defensive_posture", "signal_resolve",
 }
 
+ESCALATORY_ACTIONS = {
+    "mobilize", "strike", "advance", "blockade", "deploy_forward",
+    "probe", "defensive_posture", "signal_resolve", "partial_coercion",
+    "cyber_operation", "hack_and_leak", "nuclear_signal",
+    "targeted_sanction", "comprehensive_sanction", "embargo",
+    "technology_restriction", "asset_freeze", "expel_diplomats",
+}
+
+COERCIVE_ACTIONS = {
+    "mobilize", "strike", "advance", "blockade", "probe", "deploy_forward",
+    "partial_coercion", "cyber_operation", "hack_and_leak", "nuclear_signal",
+    "targeted_sanction", "comprehensive_sanction", "embargo",
+    "technology_restriction", "asset_freeze", "cut_supply",
+    "supply_chain_diversion", "expel_diplomats",
+}
+
+COOPERATIVE_ACTIONS = {
+    "negotiate", "back_channel", "multilateral_appeal",
+    "intel_sharing", "foreign_aid", "form_alliance",
+}
+
 
 class AnalysisEngine:
     """
@@ -56,6 +77,7 @@ class AnalysisEngine:
         # Group by doctrine
         by_doctrine = self._compute_doctrine_stats(runs)
         by_configuration = self._compute_configuration_stats(runs)
+        by_model = self._compute_model_stats(runs)
 
         # Select inflection decisions for LLM analysis
         inflections = self._select_inflection_decisions(db_paths)
@@ -96,6 +118,7 @@ class AnalysisEngine:
             "run_inventory": run_inventory,
             "by_doctrine": by_doctrine,
             "by_configuration": by_configuration,
+            "by_model": by_model,
             "bci": bci,
             "inflection_decisions": inflections,
         }
@@ -175,17 +198,28 @@ class AnalysisEngine:
         # Action sequences per actor
         cur.execute("""
             SELECT turn, actor_short_name, parsed_action, validation_result,
-                   crisis_phase_at_decision
+                   crisis_phase_at_decision, provider_usage, retry_count
             FROM decisions
             WHERE run_id = ? AND final_applied = 1
             ORDER BY turn, actor_short_name
         """, (run_id,))
 
+        validation_counts: Dict[str, int] = defaultdict(int)
+        compatibility_strategies: Dict[str, int] = defaultdict(int)
+        finish_reasons: Dict[str, int] = defaultdict(int)
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        total_tokens = 0
+        total_latency_ms = 0.0
+        latency_count = 0
+        retried_decisions = 0
+
         action_sequence: Dict[str, List[Dict]] = defaultdict(list)
-        for turn, actor, action_json, val_result, phase in cur.fetchall():
+        for turn, actor, action_json, val_result, phase, usage_json, retry_count in cur.fetchall():
             action_type = ""
             intensity = "medium"
             target = None
+            usage = {}
             if action_json:
                 try:
                     action_dict = json.loads(action_json)
@@ -194,12 +228,55 @@ class AnalysisEngine:
                     target = action_dict.get("target_actor") or action_dict.get("target_zone")
                 except json.JSONDecodeError:
                     pass
+            if usage_json:
+                try:
+                    usage = json.loads(usage_json)
+                except json.JSONDecodeError:
+                    usage = {}
+            validation_counts[val_result or "unknown"] += 1
+            if retry_count:
+                retried_decisions += 1
+
+            prompt_tokens = int(
+                usage.get("prompt_tokens")
+                or usage.get("input_tokens")
+                or 0
+            )
+            completion_tokens = int(
+                usage.get("completion_tokens")
+                or usage.get("output_tokens")
+                or 0
+            )
+            total_token_value = usage.get("total_tokens")
+            if total_token_value is None:
+                total_token_value = prompt_tokens + completion_tokens
+            total_prompt_tokens += prompt_tokens
+            total_completion_tokens += completion_tokens
+            total_tokens += int(total_token_value or 0)
+
+            compatibility_strategy = usage.get("compatibility_strategy")
+            if compatibility_strategy:
+                compatibility_strategies[str(compatibility_strategy)] += 1
+            finish_reason = usage.get("finish_reason")
+            if finish_reason:
+                finish_reasons[str(finish_reason)] += 1
+            latency_ms = usage.get("decision_latency_ms") or usage.get("provider_latency_ms")
+            if latency_ms is not None:
+                total_latency_ms += float(latency_ms)
+                latency_count += 1
             action_sequence[actor].append({
                 "turn": turn,
                 "action_type": action_type,
                 "intensity": intensity,
                 "target": target,
                 "phase": phase,
+                "validation_result": val_result,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": int(total_token_value or 0),
+                "latency_ms": float(latency_ms) if latency_ms is not None else None,
+                "compatibility_strategy": compatibility_strategy,
+                "finish_reason": finish_reason,
             })
 
         # DFS scores if available
@@ -263,6 +340,23 @@ class AnalysisEngine:
             "action_sequence": dict(action_sequence),
             "events": events,
             "dfs": dfs,
+            "operational_metrics": {
+                "total_decisions": sum(validation_counts.values()),
+                "validation_results": dict(validation_counts),
+                "valid_decisions": int(validation_counts.get("valid", 0) + validation_counts.get("retry_valid", 0)),
+                "skipped_decisions": int(validation_counts.get("skipped", 0)),
+                "retried_decisions": retried_decisions,
+                "total_prompt_tokens": total_prompt_tokens,
+                "total_completion_tokens": total_completion_tokens,
+                "total_tokens": total_tokens,
+                "avg_prompt_tokens_per_decision": round(total_prompt_tokens / max(sum(validation_counts.values()), 1), 2),
+                "avg_completion_tokens_per_decision": round(total_completion_tokens / max(sum(validation_counts.values()), 1), 2),
+                "avg_total_tokens_per_decision": round(total_tokens / max(sum(validation_counts.values()), 1), 2),
+                "avg_latency_ms": round(total_latency_ms / latency_count, 2) if latency_count else None,
+                "total_latency_ms": round(total_latency_ms, 2),
+                "compatibility_strategies": dict(compatibility_strategies),
+                "finish_reasons": dict(finish_reasons),
+            },
         }
 
     # ── Doctrine-level statistics ──────────────────────────────────────────────
@@ -309,6 +403,47 @@ class AnalysisEngine:
 
         return result
 
+    def _compute_model_stats(
+        self, runs: List[Dict[str, Any]]
+    ) -> Dict[str, Dict[str, Any]]:
+        """Compute provider/model aggregate stats across doctrines."""
+        by_model: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+        for run in runs:
+            by_model[(run["provider_name"], run["model_id"])].append(run)
+
+        result: Dict[str, Dict[str, Any]] = {}
+        for (provider_name, model_id), model_runs in sorted(
+            by_model.items(),
+            key=lambda item: (item[0][0], item[0][1]),
+        ):
+            per_doctrine: Dict[str, Dict[str, Any]] = {}
+            for doctrine, doctrine_runs in defaultdict(list, {
+                doctrine: [run for run in model_runs if run["doctrine"] == doctrine]
+                for doctrine in sorted({run["doctrine"] for run in model_runs})
+            }).items():
+                per_doctrine[doctrine] = self._summarize_run_group(doctrine_runs)
+
+            separation = self._compute_doctrine_separation(per_doctrine)
+            label = f"{provider_name} | {model_id}"
+            result[label] = {
+                "provider_name": provider_name,
+                "model_id": model_id,
+                "n_runs": len(model_runs),
+                "doctrines_covered": sorted(per_doctrine.keys()),
+                "operational_metrics": self._aggregate_operational_metrics(model_runs),
+                "doctrine_separation": separation,
+                "per_doctrine": {
+                    doctrine: {
+                        "mean_final_tension": stats["mean_final_tension"],
+                        "outcomes": stats["outcomes"],
+                        "aggregate_category_distribution": stats.get("aggregate_category_distribution", {}),
+                    }
+                    for doctrine, stats in per_doctrine.items()
+                },
+            }
+
+        return result
+
     def _summarize_run_group(self, group_runs: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Aggregate shared statistics for a homogeneous run group."""
         n = len(group_runs)
@@ -321,6 +456,7 @@ class AnalysisEngine:
         final_tensions = [r["final_tension"] for r in group_runs]
         mean_final = sum(final_tensions) / n
         std_final = _std(final_tensions) if n > 1 else 0.0
+        turns_to_terminal = [r["total_turns"] for r in group_runs]
         escalation = self._compute_escalation_rate(group_runs)
         action_dist, category_dist = self._compute_action_distributions(group_runs)
 
@@ -355,17 +491,36 @@ class AnalysisEngine:
                 ),
             }
 
+        outcome_probabilities = {
+            outcome: round(count / n, 3)
+            for outcome, count in sorted(outcomes.items())
+        }
+        actor_profiles = self._aggregate_actor_profiles(group_runs)
+        operational_metrics = self._aggregate_operational_metrics(group_runs)
+
         return {
             "n_runs": n,
             "outcomes": dict(outcomes),
+            "outcome_probabilities": outcome_probabilities,
+            "war_probability": outcome_probabilities.get("deterrence_failure", 0.0),
+            "peace_probability": outcome_probabilities.get("deterrence_success", 0.0),
+            "frozen_conflict_probability": outcome_probabilities.get("frozen_conflict", 0.0),
             "mean_tension_trajectory": mean_tension,
             "mean_final_tension": round(mean_final, 3),
             "std_final_tension": round(std_final, 3),
+            "mean_turns_to_terminal": round(sum(turns_to_terminal) / n, 2),
+            "std_turns_to_terminal": round(_std(turns_to_terminal), 3) if n > 1 else 0.0,
+            "terminal_turn_distribution": {
+                str(turn): turns_to_terminal.count(turn)
+                for turn in sorted(set(turns_to_terminal))
+            },
             "escalation_rate": escalation,
             "action_distribution": action_dist,
             "category_distribution": category_dist,
             "aggregate_action_distribution": dict(agg_actions),
             "aggregate_category_distribution": agg_cat_frac,
+            "actor_profiles": actor_profiles,
+            "operational_metrics": operational_metrics,
             "dfs": dfs_agg,
         }
 
@@ -446,6 +601,169 @@ class AnalysisEngine:
             }
 
         return dict(action_counts), category_dist
+
+    def _aggregate_actor_profiles(
+        self, runs: List[Dict[str, Any]]
+    ) -> Dict[str, Dict[str, Any]]:
+        profiles: Dict[str, Dict[str, List[Any]]] = defaultdict(lambda: defaultdict(list))
+        for run in runs:
+            for actor, actions in run["action_sequence"].items():
+                first_escalatory = self._first_matching_action(actions, ESCALATORY_ACTIONS)
+                first_coercive = self._first_matching_action(actions, COERCIVE_ACTIONS)
+                first_cooperative = self._first_matching_action(actions, COOPERATIVE_ACTIONS)
+                if first_escalatory:
+                    profiles[actor]["escalatory_turns"].append(first_escalatory["turn"])
+                    profiles[actor]["escalatory_actions"].append(first_escalatory["action_type"])
+                if first_coercive:
+                    profiles[actor]["coercive_turns"].append(first_coercive["turn"])
+                    profiles[actor]["coercive_actions"].append(first_coercive["action_type"])
+                if first_cooperative:
+                    profiles[actor]["cooperative_turns"].append(first_cooperative["turn"])
+                    profiles[actor]["cooperative_actions"].append(first_cooperative["action_type"])
+
+        result: Dict[str, Dict[str, Any]] = {}
+        total_runs = len(runs) or 1
+        for actor, profile in profiles.items():
+            result[actor] = {
+                "escalatory_rate": round(len(profile.get("escalatory_turns", [])) / total_runs, 3),
+                "coercive_rate": round(len(profile.get("coercive_turns", [])) / total_runs, 3),
+                "cooperative_rate": round(len(profile.get("cooperative_turns", [])) / total_runs, 3),
+                "mean_first_escalatory_turn": round(sum(profile["escalatory_turns"]) / len(profile["escalatory_turns"]), 2)
+                if profile.get("escalatory_turns") else None,
+                "mean_first_coercive_turn": round(sum(profile["coercive_turns"]) / len(profile["coercive_turns"]), 2)
+                if profile.get("coercive_turns") else None,
+                "mean_first_cooperative_turn": round(sum(profile["cooperative_turns"]) / len(profile["cooperative_turns"]), 2)
+                if profile.get("cooperative_turns") else None,
+                "most_common_first_escalatory_action": _mode(profile.get("escalatory_actions", [])),
+                "most_common_first_coercive_action": _mode(profile.get("coercive_actions", [])),
+                "most_common_first_cooperative_action": _mode(profile.get("cooperative_actions", [])),
+            }
+        return result
+
+    def _aggregate_operational_metrics(
+        self, runs: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        total_decisions = 0
+        valid_decisions = 0
+        skipped_decisions = 0
+        retried_decisions = 0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        total_tokens = 0
+        total_latency_ms = 0.0
+        latency_count = 0
+        validation_results: Dict[str, int] = defaultdict(int)
+        compatibility_strategies: Dict[str, int] = defaultdict(int)
+        finish_reasons: Dict[str, int] = defaultdict(int)
+
+        for run in runs:
+            metrics = run.get("operational_metrics", {})
+            total_decisions += int(metrics.get("total_decisions", 0))
+            valid_decisions += int(metrics.get("valid_decisions", 0))
+            skipped_decisions += int(metrics.get("skipped_decisions", 0))
+            retried_decisions += int(metrics.get("retried_decisions", 0))
+            total_prompt_tokens += int(metrics.get("total_prompt_tokens", 0))
+            total_completion_tokens += int(metrics.get("total_completion_tokens", 0))
+            total_tokens += int(metrics.get("total_tokens", 0))
+            if metrics.get("avg_latency_ms") is not None:
+                weighted_latency = float(metrics.get("avg_latency_ms", 0.0)) * int(metrics.get("total_decisions", 0))
+                total_latency_ms += weighted_latency
+                latency_count += int(metrics.get("total_decisions", 0))
+            for key, value in metrics.get("validation_results", {}).items():
+                validation_results[key] += int(value)
+            for key, value in metrics.get("compatibility_strategies", {}).items():
+                compatibility_strategies[key] += int(value)
+            for key, value in metrics.get("finish_reasons", {}).items():
+                finish_reasons[key] += int(value)
+
+        valid_rate = round(valid_decisions / total_decisions, 3) if total_decisions else 0.0
+        skipped_rate = round(skipped_decisions / total_decisions, 3) if total_decisions else 0.0
+        retry_rate = round(retried_decisions / total_decisions, 3) if total_decisions else 0.0
+        avg_latency_ms = round(total_latency_ms / latency_count, 2) if latency_count else None
+        avg_tokens = round(total_tokens / total_decisions, 2) if total_decisions else 0.0
+
+        admission_status = "admit"
+        admission_notes: List[str] = []
+        if valid_rate < 0.95 or skipped_rate > 0.05:
+            admission_status = "caution"
+            admission_notes.append("Validation/fallback rate suggests partial compatibility risk.")
+        if valid_rate < 0.80 or skipped_rate > 0.20:
+            admission_status = "exclude"
+            admission_notes.append("Decision validity is too weak for benchmark-quality runs.")
+        if avg_latency_ms is not None and avg_latency_ms > 20000:
+            admission_status = "caution" if admission_status == "admit" else admission_status
+            admission_notes.append("Average decision latency is high enough to slow repeated-run batches.")
+
+        return {
+            "total_decisions": total_decisions,
+            "valid_decisions": valid_decisions,
+            "skipped_decisions": skipped_decisions,
+            "retried_decisions": retried_decisions,
+            "valid_decision_rate": valid_rate,
+            "skipped_decision_rate": skipped_rate,
+            "retry_rate": retry_rate,
+            "total_prompt_tokens": total_prompt_tokens,
+            "total_completion_tokens": total_completion_tokens,
+            "total_tokens": total_tokens,
+            "avg_prompt_tokens_per_decision": round(total_prompt_tokens / total_decisions, 2) if total_decisions else 0.0,
+            "avg_completion_tokens_per_decision": round(total_completion_tokens / total_decisions, 2) if total_decisions else 0.0,
+            "avg_total_tokens_per_decision": avg_tokens,
+            "avg_latency_ms": avg_latency_ms,
+            "validation_results": dict(validation_results),
+            "compatibility_strategies": dict(sorted(compatibility_strategies.items())),
+            "finish_reasons": dict(sorted(finish_reasons.items())),
+            "admission_status": admission_status,
+            "admission_notes": admission_notes,
+        }
+
+    def _compute_doctrine_separation(
+        self, per_doctrine: Dict[str, Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        if len(per_doctrine) < 2:
+            return None
+
+        doctrine_names = sorted(per_doctrine.keys())
+        pairwise_category_distances: List[float] = []
+        for idx, left_name in enumerate(doctrine_names):
+            for right_name in doctrine_names[idx + 1:]:
+                left = per_doctrine[left_name].get("aggregate_category_distribution", {})
+                right = per_doctrine[right_name].get("aggregate_category_distribution", {})
+                pairwise_category_distances.append(_total_variation_distance(left, right))
+
+        tensions = [float(stats["mean_final_tension"]) for stats in per_doctrine.values()]
+        tension_range = max(tensions) - min(tensions) if tensions else 0.0
+        dominant_outcomes = {
+            max(stats.get("outcomes", {}).items(), key=lambda item: item[1])[0]
+            for stats in per_doctrine.values()
+            if stats.get("outcomes")
+        }
+        outcome_diversity = (
+            (len(dominant_outcomes) - 1) / max(len(per_doctrine) - 1, 1)
+            if dominant_outcomes else 0.0
+        )
+        avg_pairwise_distance = (
+            sum(pairwise_category_distances) / len(pairwise_category_distances)
+            if pairwise_category_distances else 0.0
+        )
+        score = min(
+            1.0,
+            (0.6 * avg_pairwise_distance) + (0.3 * tension_range) + (0.1 * outcome_diversity),
+        )
+
+        return {
+            "score": round(score, 3),
+            "avg_pairwise_category_distance": round(avg_pairwise_distance, 3),
+            "tension_range": round(tension_range, 3),
+            "dominant_outcome_diversity": round(outcome_diversity, 3),
+        }
+
+    def _first_matching_action(
+        self, actions: List[Dict[str, Any]], candidates: set[str]
+    ) -> Optional[Dict[str, Any]]:
+        for action in actions:
+            if action.get("action_type") in candidates:
+                return action
+        return None
 
     # ── Inflection decision selection ──────────────────────────────────────────
 
@@ -667,3 +985,19 @@ def _std(values: List[float]) -> float:
     mean = sum(values) / len(values)
     variance = sum((v - mean) ** 2 for v in values) / len(values)
     return round(math.sqrt(variance), 3)
+
+
+def _mode(values: List[str]) -> Optional[str]:
+    if not values:
+        return None
+    counts: Dict[str, int] = defaultdict(int)
+    for value in values:
+        counts[value] += 1
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+
+def _total_variation_distance(
+    left: Dict[str, float], right: Dict[str, float]
+) -> float:
+    keys = set(left) | set(right)
+    return 0.5 * sum(abs(float(left.get(key, 0.0)) - float(right.get(key, 0.0))) for key in keys)

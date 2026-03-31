@@ -62,6 +62,60 @@ def build_graph_assets(
             }
         )
 
+        latency_path = asset_dir / "latency_by_configuration.svg"
+        latency_path.write_text(
+            _render_bar_chart(
+                title="Average Decision Latency by Doctrine / Model",
+                entries=[
+                    {
+                        "label": _short_label(stat["model_id"]),
+                        "group": stat["doctrine"],
+                        "value": float((stat.get("operational_metrics", {}) or {}).get("avg_latency_ms") or 0.0) / 1000.0,
+                        "note": {"admission": (stat.get("operational_metrics", {}) or {}).get("admission_status", "unknown")},
+                    }
+                    for stat in config_stats
+                    if (stat.get("operational_metrics", {}) or {}).get("avg_latency_ms") is not None
+                ],
+            ),
+            encoding="utf-8",
+        )
+        graphs.append(
+            {
+                "kind": "operations",
+                "title": "Average Decision Latency by Doctrine / Model",
+                "path": str(latency_path),
+                "relative_path": str(latency_path.relative_to(output_dir)),
+            }
+        )
+
+    model_stats = list(report_data.get("by_model", {}).values())
+    if model_stats:
+        separation_path = asset_dir / "doctrine_separation_by_model.svg"
+        separation_path.write_text(
+            _render_bar_chart(
+                title="Doctrine Separation Score by Model",
+                entries=[
+                    {
+                        "label": _short_label(stat["model_id"]),
+                        "group": stat["provider_name"],
+                        "value": float((stat.get("doctrine_separation") or {}).get("score") or 0.0),
+                        "note": {"doctrines": len(stat.get("doctrines_covered", []))},
+                    }
+                    for stat in model_stats
+                    if stat.get("doctrine_separation") is not None
+                ],
+            ),
+            encoding="utf-8",
+        )
+        graphs.append(
+            {
+                "kind": "comparison",
+                "title": "Doctrine Separation Score by Model",
+                "path": str(separation_path),
+                "relative_path": str(separation_path.relative_to(output_dir)),
+            }
+        )
+
     by_doctrine: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for stat in config_stats:
         by_doctrine[stat["doctrine"]].append(stat)

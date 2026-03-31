@@ -136,6 +136,7 @@ def generate_report(
         "metadata": report_data["metadata"],
         "by_doctrine": report_data["by_doctrine"],
         "by_configuration": report_data.get("by_configuration", {}),
+        "by_model": report_data.get("by_model", {}),
         "run_inventory": report_data.get("run_inventory", []),
         "graphs": report_data.get("graphs", []),
         "bci": report_data.get("bci"),

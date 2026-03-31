@@ -16,6 +16,7 @@ Provider is injected — swap Anthropic for OpenRouter at construction time.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -318,18 +319,24 @@ class LLMDecisionActor(ActorInterface):
         provider_usage: Dict[str, Any] = {}
         final_action: Optional[BaseAction] = None
         applied = False
+        attempt_latencies_ms: List[float] = []
+        call_started = time.perf_counter()
 
         for attempt in range(MAX_RETRIES + 1):
             try:
+                attempt_started = time.perf_counter()
                 provider_result = self._provider.call(
                     system_prompt=self._persona_prompt,
                     user_message=decision_prompt,
                     action_tool_schema=ACTION_TOOL_SCHEMA,
                 )
+                attempt_latency_ms = round((time.perf_counter() - attempt_started) * 1000, 2)
+                attempt_latencies_ms.append(attempt_latency_ms)
                 reasoning_trace = provider_result.reasoning_trace
                 tool_input = provider_result.action_dict
                 raw_response = provider_result.raw_response
-                provider_usage = provider_result.usage
+                provider_usage = dict(provider_result.usage)
+                provider_usage["provider_latency_ms"] = attempt_latency_ms
 
                 if tool_input is None:
                     validation_errors = ["LLM did not call submit_action tool."]
@@ -368,6 +375,8 @@ class LLMDecisionActor(ActorInterface):
                         retry_count = attempt
 
             except Exception as e:
+                attempt_latency_ms = round((time.perf_counter() - attempt_started) * 1000, 2)
+                attempt_latencies_ms.append(attempt_latency_ms)
                 validation_errors = [f"LLM call failed: {str(e)}"]
                 validation_result = "invalid"
                 retry_count = attempt
@@ -383,6 +392,11 @@ class LLMDecisionActor(ActorInterface):
             )
             validation_result = "skipped"
             applied = True
+
+        provider_usage = dict(provider_usage)
+        provider_usage["decision_latency_ms"] = round((time.perf_counter() - call_started) * 1000, 2)
+        provider_usage["attempt_latencies_ms"] = attempt_latencies_ms
+        provider_usage["attempt_count"] = len(attempt_latencies_ms)
 
         record = DecisionRecord(
             turn=state.turn,

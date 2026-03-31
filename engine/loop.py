@@ -383,7 +383,7 @@ class SimulationEngine:
         """Classify outcome when max_turns is reached without terminal condition."""
         if self.state.crisis_phase == "war":
             return "deterrence_failure"
-        elif self.state.global_tension <= 0.40:
+        elif self.state.turn >= 3 and self.state.global_tension <= 0.30:
             return "deterrence_success"
         elif self.state.crisis_phase in ("crisis", "tension"):
             return "frozen_conflict"

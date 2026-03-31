@@ -198,18 +198,23 @@ def _build_statistics_block(report_data: Dict[str, Any]) -> str:
             )
         lines.append("")
 
-    for doctrine, stats in report_data["by_doctrine"].items():
-        lines.append(f"## Condition: {doctrine}")
-        lines.append(f"- Runs: {stats['n_runs']}")
-        lines.append(f"- Outcomes: {json.dumps(stats['outcomes'])}")
-        lines.append(f"- Mean final tension: {stats['mean_final_tension']} "
+        for doctrine, stats in report_data["by_doctrine"].items():
+            lines.append(f"## Condition: {doctrine}")
+            lines.append(f"- Runs: {stats['n_runs']}")
+            lines.append(f"- Outcomes: {json.dumps(stats['outcomes'])}")
+            lines.append(f"- Outcome probabilities: {json.dumps(stats.get('outcome_probabilities', {}))}")
+            lines.append(f"- Mean final tension: {stats['mean_final_tension']} "
                       f"(±{stats['std_final_tension']})")
+            lines.append(
+                f"- Mean turns to terminal: {stats.get('mean_turns_to_terminal')} "
+                f"(±{stats.get('std_turns_to_terminal')})"
+            )
 
-        esc = stats["escalation_rate"]
-        lines.append(f"- Mean turns to crisis: {esc['mean_turns_to_crisis']}")
-        lines.append(f"- Mean turns to war: {esc['mean_turns_to_war']}")
-        lines.append(f"- % reaching crisis: {esc['pct_reaching_crisis']}")
-        lines.append(f"- % reaching war: {esc['pct_reaching_war']}")
+            esc = stats["escalation_rate"]
+            lines.append(f"- Mean turns to crisis: {esc['mean_turns_to_crisis']}")
+            lines.append(f"- Mean turns to war: {esc['mean_turns_to_war']}")
+            lines.append(f"- % reaching crisis: {esc['pct_reaching_crisis']}")
+            lines.append(f"- % reaching war: {esc['pct_reaching_war']}")
 
         # Tension trajectory (abbreviated — first, mid, last)
         traj = stats["mean_tension_trajectory"]
@@ -256,6 +261,36 @@ def _build_statistics_block(report_data: Dict[str, Any]) -> str:
             "BCI omitted because the available report data does not contain repeated "
             "runs per doctrine condition."
         )
+        lines.append("")
+
+    model_stats = report_data.get("by_model", {})
+    if model_stats:
+        lines.append("## Model Readiness And Doctrine Separation")
+        for label, stats in model_stats.items():
+            ops = stats.get("operational_metrics", {})
+            separation = stats.get("doctrine_separation") or {}
+            lines.append(f"- {label}")
+            lines.append(f"  - Doctrines covered: {', '.join(stats.get('doctrines_covered', []))}")
+            lines.append(
+                f"  - Admission status: {ops.get('admission_status')} | "
+                f"valid_rate={ops.get('valid_decision_rate')} | "
+                f"skipped_rate={ops.get('skipped_decision_rate')} | "
+                f"retry_rate={ops.get('retry_rate')}"
+            )
+            lines.append(
+                f"  - Avg latency ms: {ops.get('avg_latency_ms')} | "
+                f"avg total tokens/decision: {ops.get('avg_total_tokens_per_decision')}"
+            )
+            lines.append(
+                f"  - Compatibility strategies: {json.dumps(ops.get('compatibility_strategies', {}))} | "
+                f"finish reasons: {json.dumps(ops.get('finish_reasons', {}))}"
+            )
+            if separation:
+                lines.append(
+                    f"  - Doctrine separation score={separation.get('score')} | "
+                    f"pairwise category distance={separation.get('avg_pairwise_category_distance')} | "
+                    f"tension range={separation.get('tension_range')}"
+                )
         lines.append("")
 
     return "\n".join(lines)

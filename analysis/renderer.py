@@ -12,14 +12,17 @@ Two output modes:
 Report sections (in order):
   1. Executive Summary (LLM if available, else templated)
   2. Experiment Overview (metadata table)
-  3. Outcome Distribution
-  4. Escalation Dynamics (tension trajectory, phase transitions)
-  5. Action Distribution (per-actor frequency, category breakdown)
-  6. Doctrine Fidelity (DFS scores if available)
-  7. Behavioral Consistency (BCI if multiple runs)
-  8. Key Turning Points (LLM-analyzed inflection decisions, --llm only)
-  9. Cross-Doctrine Findings (LLM if available)
-  10. Limitations
+  3. Model Readiness / Compatibility
+  4. Outcome Metrics
+  5. Escalation Dynamics (tension trajectory, phase transitions)
+  6. Action Distribution (per-actor frequency, category breakdown)
+  7. Actor Escalation Profiles
+  8. Operational Efficiency / Compatibility
+  9. Doctrine Fidelity (DFS scores if available)
+  10. Behavioral Consistency (BCI if multiple runs)
+  11. Key Turning Points (LLM-analyzed inflection decisions, --llm only)
+  12. Cross-Doctrine Findings (LLM if available)
+  13. Limitations
 """
 from __future__ import annotations
 
@@ -45,11 +48,14 @@ class MarkdownRenderer:
             self._experiment_overview(data),
             self._visual_summary(data),
             self._configuration_summary(data),
+            self._model_readiness(data),
             self._doctrine_model_comparison(data, analyst),
             self._run_inventory(data),
-            self._outcome_distribution(data),
+            self._outcome_metrics(data),
             self._escalation_dynamics(data, analyst),
             self._action_distribution(data),
+            self._actor_profiles(data),
+            self._operational_metrics(data),
             self._doctrine_fidelity(data),
             self._behavioral_consistency(data),
             self._turning_points(data, analyst),
@@ -235,7 +241,30 @@ class MarkdownRenderer:
 
         return "\n".join(lines).strip()
 
-    def _outcome_distribution(self, data: Dict) -> str:
+    def _model_readiness(self, data: Dict) -> str:
+        models = data.get("by_model", {})
+        if not models:
+            return ""
+
+        lines = ["## Model Readiness And Doctrine Separation\n"]
+        lines.append("| Provider | Model | Doctrines | Separation Score | Admission | Valid Rate | Avg Latency | Avg Tokens / Decision |")
+        lines.append("|----------|-------|-----------|------------------|-----------|------------|-------------|-----------------------|")
+        for stats in models.values():
+            ops = stats.get("operational_metrics", {})
+            separation = stats.get("doctrine_separation") or {}
+            latency_ms = ops.get("avg_latency_ms")
+            lines.append(
+                f"| {stats['provider_name']} | {stats['model_id']} | "
+                f"{len(stats.get('doctrines_covered', []))} | "
+                f"{separation.get('score', '—')} | "
+                f"{ops.get('admission_status', '—')} | "
+                f"{ops.get('valid_decision_rate', '—')} | "
+                f"{(f'{latency_ms/1000:.2f}s' if latency_ms is not None else '—')} | "
+                f"{ops.get('avg_total_tokens_per_decision', '—')} |"
+            )
+        return "\n".join(lines)
+
+    def _outcome_metrics(self, data: Dict) -> str:
         bd = data["by_doctrine"]
         if not bd:
             return ""
@@ -258,11 +287,21 @@ class MarkdownRenderer:
             cells = [str(outcomes.get(o, 0)) for o in all_outcomes]
             rows.append(f"| {doctrine} | " + " | ".join(cells) + " |")
 
-        return (
-            "## Outcome Distribution\n\n"
-            + header + "\n" + sep + "\n"
-            + "\n".join(rows)
-        )
+        lines = ["## Outcome Metrics\n"]
+        lines.append(header)
+        lines.append(sep)
+        lines.extend(rows)
+        lines.append("")
+        lines.append("| Condition | Peace Prob. | Frozen Conflict Prob. | War Prob. | Mean Turns to Terminal |")
+        lines.append("|-----------|-------------|-----------------------|-----------|------------------------|")
+        for doctrine, stats in bd.items():
+            lines.append(
+                f"| {doctrine} | {stats.get('peace_probability', 0.0):.1%} | "
+                f"{stats.get('frozen_conflict_probability', 0.0):.1%} | "
+                f"{stats.get('war_probability', 0.0):.1%} | "
+                f"{stats.get('mean_turns_to_terminal', '—')} |"
+            )
+        return "\n".join(lines)
 
     def _escalation_dynamics(self, data: Dict, analyst: Optional[Dict]) -> str:
         lines = ["## Escalation Dynamics\n"]
@@ -347,6 +386,78 @@ class MarkdownRenderer:
                     lines.append(f"- **{actor}:** {action_str}")
                 lines.append("")
 
+        return "\n".join(lines)
+
+    def _actor_profiles(self, data: Dict) -> str:
+        lines = ["## Actor Escalation Profiles\n"]
+        emitted = False
+
+        for doctrine, stats in data["by_doctrine"].items():
+            profiles = stats.get("actor_profiles", {})
+            if not profiles:
+                continue
+            emitted = True
+            lines.append(f"### {doctrine}\n")
+            lines.append(
+                "| Actor | Escalatory Rate | First Escalatory | First Coercive | First Cooperative |"
+            )
+            lines.append(
+                "|-------|-----------------|------------------|----------------|-------------------|"
+            )
+            for actor, profile in sorted(profiles.items()):
+                escalatory = _format_profile_action(
+                    profile.get("most_common_first_escalatory_action"),
+                    profile.get("mean_first_escalatory_turn"),
+                )
+                coercive = _format_profile_action(
+                    profile.get("most_common_first_coercive_action"),
+                    profile.get("mean_first_coercive_turn"),
+                )
+                cooperative = _format_profile_action(
+                    profile.get("most_common_first_cooperative_action"),
+                    profile.get("mean_first_cooperative_turn"),
+                )
+                lines.append(
+                    f"| {actor} | {profile.get('escalatory_rate', 0.0):.1%} | "
+                    f"{escalatory} | {coercive} | {cooperative} |"
+                )
+            lines.append("")
+
+        return "\n".join(lines).strip() if emitted else ""
+
+    def _operational_metrics(self, data: Dict) -> str:
+        configs = data.get("by_configuration", {})
+        if not configs:
+            return ""
+
+        lines = ["## Operational Efficiency And Compatibility\n"]
+        lines.append(
+            "| Doctrine | Provider | Model | Valid Rate | Retry Rate | Avg Latency | Avg Tokens / Decision | Compatibility |"
+        )
+        lines.append(
+            "|----------|----------|-------|------------|------------|-------------|-----------------------|---------------|"
+        )
+        for stats in configs.values():
+            ops = stats.get("operational_metrics", {})
+            latency_ms = ops.get("avg_latency_ms")
+            compatibility = _format_strategy_counts(ops.get("compatibility_strategies", {}))
+            lines.append(
+                f"| {stats['doctrine']} | {stats['provider_name']} | {stats['model_id']} | "
+                f"{ops.get('valid_decision_rate', 0.0):.1%} | "
+                f"{ops.get('retry_rate', 0.0):.1%} | "
+                f"{(f'{latency_ms/1000:.2f}s' if latency_ms is not None else '—')} | "
+                f"{ops.get('avg_total_tokens_per_decision', '—')} | "
+                f"{compatibility} |"
+            )
+        lines.append("")
+        lines.append("**Admission notes by model:**\n")
+        for model_stats in data.get("by_model", {}).values():
+            ops = model_stats.get("operational_metrics", {})
+            notes = "; ".join(ops.get("admission_notes", [])) or "No major compatibility issues detected."
+            lines.append(
+                f"- **{model_stats['provider_name']} / {model_stats['model_id']}**: "
+                f"{ops.get('admission_status', '—')} — {notes}"
+            )
         return "\n".join(lines)
 
     def _doctrine_fidelity(self, data: Dict) -> str:
@@ -472,6 +583,22 @@ def _top_categories(stats: Dict[str, Any], limit: int = 3) -> str:
     return ", ".join(f"{name}:{share:.0%}" for name, share in categories)
 
 
+def _format_profile_action(action: Optional[str], turn: Optional[float]) -> str:
+    if not action or turn is None:
+        return "—"
+    return f"{action} @ {turn:.1f}"
+
+
+def _format_strategy_counts(strategies: Dict[str, int]) -> str:
+    if not strategies:
+        return "—"
+    return ", ".join(
+        f"{name}:{count}" for name, count in sorted(
+            strategies.items(), key=lambda item: (-item[1], item[0])
+        )
+    )
+
+
 def _estimate_confidence(configs: List[Dict[str, Any]]) -> Tuple[float, str]:
     if len(configs) <= 1:
         return 0.2, "Only one configuration was available for this doctrine, so comparative confidence is necessarily low."
@@ -545,11 +672,14 @@ class LaTeXRenderer:
             self._executive_summary(data, analyst),
             self._experiment_overview(data),
             self._configuration_summary(data),
+            self._model_readiness(data),
             self._doctrine_model_comparison(data, analyst),
             self._run_inventory(data),
-            self._outcome_distribution(data),
+            self._outcome_metrics(data),
             self._escalation_dynamics(data, analyst),
             self._action_distribution(data),
+            self._actor_profiles(data),
+            self._operational_metrics(data),
             self._doctrine_fidelity(data),
             self._behavioral_consistency(data),
             self._turning_points(data, analyst),
@@ -751,6 +881,39 @@ class LaTeXRenderer:
             r"\end{longtable}"
         )
 
+    def _model_readiness(self, data: Dict) -> str:
+        models = data.get("by_model", {})
+        if not models:
+            return ""
+
+        rows = []
+        for stats in models.values():
+            ops = stats.get("operational_metrics", {})
+            separation = stats.get("doctrine_separation") or {}
+            latency_ms = ops.get("avg_latency_ms")
+            rows.append(
+                "        "
+                f"{_tex_escape(stats['provider_name'])} & "
+                f"{_tex_escape(stats['model_id'])} & "
+                f"{len(stats.get('doctrines_covered', []))} & "
+                f"{separation.get('score', '---')} & "
+                f"{_tex_escape(ops.get('admission_status', '---'))} & "
+                f"{ops.get('valid_decision_rate', '---')} & "
+                f"{_tex_escape(f'{latency_ms/1000:.2f}s' if latency_ms is not None else '---')} \\\\"
+            )
+
+        return (
+            r"\section{Model Readiness And Doctrine Separation}" + "\n\n"
+            r"\begin{longtable}{llrrll}" + "\n"
+            r"    \toprule" + "\n"
+            r"    Provider & Model & Doctrines & Separation Score & Admission & Avg Latency \\" + "\n"
+            r"    \midrule" + "\n"
+            r"    \endhead" + "\n"
+            + "\n".join(rows) + "\n"
+            r"    \bottomrule" + "\n"
+            r"\end{longtable}"
+        )
+
     def _doctrine_model_comparison(self, data: Dict, analyst: Optional[Dict]) -> str:
         grouped = _group_configurations_by_doctrine(data)
         if not grouped:
@@ -856,7 +1019,7 @@ class LaTeXRenderer:
             r"\end{longtable}"
         )
 
-    def _outcome_distribution(self, data: Dict) -> str:
+    def _outcome_metrics(self, data: Dict) -> str:
         bd = data["by_doctrine"]
         all_outcomes = set()
         for stats in bd.values():
@@ -875,8 +1038,19 @@ class LaTeXRenderer:
             cells = [str(outcomes.get(o, 0)) for o in all_outcomes]
             rows.append(f"        {_tex_escape(doctrine)} & " + " & ".join(cells) + r" \\")
 
+        probability_rows = []
+        for doctrine, stats in bd.items():
+            probability_rows.append(
+                "        "
+                f"{_tex_escape(doctrine)} & "
+                f"{_tex_pct(stats.get('peace_probability', 0.0))} & "
+                f"{_tex_pct(stats.get('frozen_conflict_probability', 0.0))} & "
+                f"{_tex_pct(stats.get('war_probability', 0.0))} & "
+                f"{stats.get('mean_turns_to_terminal', '---')} \\\\"
+            )
+
         return (
-            r"\section{Outcome Distribution}" + "\n\n"
+            r"\section{Outcome Metrics}" + "\n\n"
             r"\begin{table}[h]" + "\n"
             r"\centering" + "\n"
             rf"\begin{{tabular}}{{{col_spec}}}" + "\n"
@@ -887,7 +1061,18 @@ class LaTeXRenderer:
             r"    \bottomrule" + "\n"
             r"\end{tabular}" + "\n"
             r"\caption{Outcome distribution by doctrine condition.}" + "\n"
-            r"\end{table}"
+            r"\end{table}" + "\n\n"
+            r"\begin{table}[h]" + "\n"
+            r"\centering" + "\n"
+            r"\begin{tabular}{lrrrr}" + "\n"
+            r"    \toprule" + "\n"
+            r"    Condition & Peace Prob. & Frozen Conflict Prob. & War Prob. & Mean Turns to Terminal \\" + "\n"
+            r"    \midrule" + "\n"
+            + "\n".join(probability_rows) + "\n"
+            + r"    \bottomrule" + "\n"
+            + r"\end{tabular}" + "\n"
+            + r"\caption{Terminal outcome probabilities and run length by doctrine.}" + "\n"
+            + r"\end{table}"
         )
 
     def _escalation_dynamics(self, data: Dict, analyst: Optional[Dict]) -> str:
@@ -1006,6 +1191,83 @@ class LaTeXRenderer:
                     lines.append("")
 
         return "\n".join(lines)
+
+    def _actor_profiles(self, data: Dict) -> str:
+        parts = []
+        for doctrine, stats in data["by_doctrine"].items():
+            profiles = stats.get("actor_profiles", {})
+            if not profiles:
+                continue
+            rows = []
+            for actor, profile in sorted(profiles.items()):
+                rows.append(
+                    "        "
+                    f"{_tex_escape(actor)} & "
+                    f"{_tex_pct(profile.get('escalatory_rate', 0.0))} & "
+                    f"{_tex_escape(_format_profile_action(profile.get('most_common_first_escalatory_action'), profile.get('mean_first_escalatory_turn')))} & "
+                    f"{_tex_escape(_format_profile_action(profile.get('most_common_first_coercive_action'), profile.get('mean_first_coercive_turn')))} & "
+                    f"{_tex_escape(_format_profile_action(profile.get('most_common_first_cooperative_action'), profile.get('mean_first_cooperative_turn')))} \\\\"
+                )
+            parts.append(
+                rf"\subsection{{{_tex_escape(doctrine)}}}" + "\n"
+                + r"\begin{longtable}{lclll}" + "\n"
+                + r"    \toprule" + "\n"
+                + r"    Actor & Escalatory Rate & First Escalatory & First Coercive & First Cooperative \\" + "\n"
+                + r"    \midrule" + "\n"
+                + r"    \endhead" + "\n"
+                + "\n".join(rows) + "\n"
+                + r"    \bottomrule" + "\n"
+                + r"\end{longtable}"
+            )
+        if not parts:
+            return ""
+        return r"\section{Actor Escalation Profiles}" + "\n\n" + "\n\n".join(parts)
+
+    def _operational_metrics(self, data: Dict) -> str:
+        configs = data.get("by_configuration", {})
+        if not configs:
+            return ""
+
+        rows = []
+        for stats in configs.values():
+            ops = stats.get("operational_metrics", {})
+            latency_ms = ops.get("avg_latency_ms")
+            rows.append(
+                "        "
+                f"{_tex_escape(stats['doctrine'])} & "
+                f"{_tex_escape(stats['provider_name'])} & "
+                f"{_tex_escape(stats['model_id'])} & "
+                f"{_tex_pct(ops.get('valid_decision_rate', 0.0))} & "
+                f"{_tex_pct(ops.get('retry_rate', 0.0))} & "
+                f"{_tex_escape(f'{latency_ms/1000:.2f}s' if latency_ms is not None else '---')} & "
+                f"{ops.get('avg_total_tokens_per_decision', '---')} & "
+                f"{_tex_escape(_format_strategy_counts(ops.get('compatibility_strategies', {})))} \\\\"
+            )
+
+        model_notes = []
+        for model_stats in data.get("by_model", {}).values():
+            ops = model_stats.get("operational_metrics", {})
+            notes = "; ".join(ops.get("admission_notes", [])) or "No major compatibility issues detected."
+            model_notes.append(
+                rf"\item \textbf{{{_tex_escape(model_stats['provider_name'])} / {_tex_escape(model_stats['model_id'])}}}: "
+                rf"{_tex_escape(ops.get('admission_status', '---'))} --- {_tex_escape(notes)}"
+            )
+
+        return (
+            r"\section{Operational Efficiency And Compatibility}" + "\n\n"
+            + r"\begin{longtable}{lllrrrrl}" + "\n"
+            + r"    \toprule" + "\n"
+            + r"    Doctrine & Provider & Model & Valid Rate & Retry Rate & Avg Latency & Avg Tokens / Decision & Compatibility \\" + "\n"
+            + r"    \midrule" + "\n"
+            + r"    \endhead" + "\n"
+            + "\n".join(rows) + "\n"
+            + r"    \bottomrule" + "\n"
+            + r"\end{longtable}" + "\n\n"
+            + r"\textbf{Admission notes by model}" + "\n"
+            + r"\begin{itemize}" + "\n"
+            + "\n".join(model_notes) + "\n"
+            + r"\end{itemize}"
+        )
 
     def _doctrine_fidelity(self, data: Dict) -> str:
         has_dfs = any(

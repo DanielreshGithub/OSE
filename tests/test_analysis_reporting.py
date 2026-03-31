@@ -57,6 +57,14 @@ def _write_sample_run(
                 "target_actor": "PRC",
                 "intensity": "medium",
             },
+            provider_usage={
+                "prompt_tokens": 120,
+                "completion_tokens": 24,
+                "total_tokens": 144,
+                "decision_latency_ms": 950.0,
+                "compatibility_strategy": "forced_tool_choice",
+                "finish_reason": "tool_calls",
+            },
             validation_result="valid",
             final_applied=True,
             crisis_phase_at_decision="tension",
@@ -123,12 +131,18 @@ class AnalysisReportingTests(unittest.TestCase):
         )
         self.assertTrue(meta["mixed_model_report"])
         self.assertEqual(len(report_data["run_inventory"]), 2)
+        self.assertIn("by_model", report_data)
         self.assertIn("liberal | openrouter | openai/gpt-4o", report_data["by_configuration"])
         self.assertIn("liberal | openrouter | x-ai/grok-4.1-fast", report_data["by_configuration"])
         self.assertTrue(report_data["inflection_decisions"])
         self.assertEqual(
             report_data["inflection_decisions"][0]["provider_name"],
             "openrouter",
+        )
+        self.assertIn("openrouter | openai/gpt-4o", report_data["by_model"])
+        self.assertEqual(
+            report_data["by_model"]["openrouter | openai/gpt-4o"]["operational_metrics"]["avg_total_tokens_per_decision"],
+            144.0,
         )
 
     def test_report_text_surfaces_model_identity(self):
@@ -164,6 +178,9 @@ class AnalysisReportingTests(unittest.TestCase):
         self.assertIn("x-ai/grok-4.1-fast", stats_block)
         self.assertIn("Provider / Model", inflections_block)
         self.assertIn("## Configuration Summary", markdown)
+        self.assertIn("## Model Readiness And Doctrine Separation", markdown)
+        self.assertIn("## Outcome Metrics", markdown)
+        self.assertIn("## Operational Efficiency And Compatibility", markdown)
         self.assertIn("## Run Inventory", markdown)
         self.assertIn("x-ai/grok-4.1-fast", markdown)
 
@@ -227,8 +244,12 @@ class AnalysisReportingTests(unittest.TestCase):
 
         self.assertIn("## Visual Summary", markdown)
         self.assertIn("## Doctrine-by-Doctrine Model Comparison", markdown)
+        self.assertIn("## Model Readiness And Doctrine Separation", markdown)
+        self.assertIn("## Outcome Metrics", markdown)
+        self.assertIn("## Operational Efficiency And Compatibility", markdown)
         self.assertNotIn("## Behavioral Consistency Index (BCI)", markdown)
         self.assertIn("graphs", json_payload)
+        self.assertIn("by_model", json_payload)
 
 
 if __name__ == "__main__":

@@ -99,6 +99,8 @@ class AnthropicProvider(LLMProvider):
                 )
                 if getattr(response.usage, key, None) is not None
             }
+        usage["compatibility_strategy"] = "tool_use"
+        usage["finish_reason"] = getattr(response, "stop_reason", None)
 
         if hasattr(response, "model_dump_json"):
             raw_response = response.model_dump_json(indent=2)
