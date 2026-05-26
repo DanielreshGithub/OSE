@@ -420,6 +420,18 @@ class SimulationEngine:
                 self.state.systemic.alliance_system_cohesion, 3
             ),
         }
+        # Spatial layer (Phase A: data-only; positions don't evolve yet)
+        if self.state.units:
+            snap["units"] = {
+                unit_id: {
+                    "owner": unit.owner,
+                    "unit_type": unit.unit_type,
+                    "lat": round(unit.lat, 4),
+                    "lon": round(unit.lon, 4),
+                    "state": unit.state,
+                }
+                for unit_id, unit in self.state.units.items()
+            }
         return snap
 
     # ── Rich display ──────────────────────────────────────────────────────────

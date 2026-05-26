@@ -90,3 +90,41 @@ Per-actor doctrine narratives (`doctrine_*.md`) are written to one consistent te
 This document and the four doctrine narrative files were drafted as part of the OSE operational-realism work in May 2026. They reflect the author's reading of the cited source families and should not be treated as authoritative on any individual factual claim. The purpose is *prompt-shaping* — to push LLM actors toward behavior consistent with observed patterns — not to produce a peer-reviewed military assessment.
 
 For any claim that materially affects scenario outcome, verify against the cited primary source before relying on it.
+
+---
+
+## Phase A Changelog (2026-05)
+
+Phase A of the spatial-layer + accuracy work introduces the `year_horizon`
+parameter to `TaiwanStraitScenario`, externalized unit rosters in
+`scenarios/data/units_2026.py` and `units_2030.py`, named locations in
+`named_locations.py`, and three targeted capability recalibrations driven by
+the audit flagged earlier in this document.
+
+### Capability recalibrations applied
+
+All three changes are now controlled by `year_horizon` so the previously
+implicit mixing of 2026 and 2030 projections is explicit. Inline comments in
+`scenarios/taiwan_strait.py` reference these source families.
+
+| Actor | Field | 2026 (was → now) | 2030 (projected) | Source |
+|---|---|---|---|---|
+| PRC | `amphibious_capacity` | 0.78 → **0.62** | 0.72 | IISS MB 2024-25 + DoD CMPR 2024. PLAN amphibious force ~3 Type 075 LHD + ~8 Type 071 LPD as of 2024; analyses indicate ~30+ amphibs needed for opposed Taiwan landing. 2030 reflects Type 075 hulls 3+ and Type 076 LHA entering service. |
+| PRC | `nuclear_capability` | 0.80 → **0.58** | 0.72 | DoD CMPR 2024 + FAS Nuclear Notebook. PRC ~500 deployed warheads 2024 vs USA ~1700 deployed → relative-capability ratio ~0.58. CMPR projects ~1000 warheads by 2030, narrowing the gap. |
+| TWN | `a2ad_effectiveness` | 0.68 → **0.55** | 0.72 | CSIS Taiwan defense series + Lee Hsi-min ODC analyses. ODC reform incomplete in 2026 (Harpoon coastal defense delivering 2024-2028; reserve reform 2024+; Hai Kun SSK lead boat in trials). 2030 reflects mature ODC: full Harpoon batteries, HF-3 ER, additional Hai Kun hulls. |
+
+### New data files
+
+- `scenarios/data/named_locations.py` — ~40 referenceable geographic points (US/PRC/TWN/JPN bases, key straits, contested features, capitals). Coordinates rounded to 2 decimal places (~1 km — honest public-record precision).
+- `scenarios/data/units_2026.py` — ~50 platform-level units for the 2026 baseline across all four actors. Each unit carries a `source` citation and a `confidence` tag (HIGH / MEDIUM / LOW).
+- `scenarios/data/units_2030.py` — derives from 2026 plus projected additions (Fujian carrier, additional Type 075/076, B-21 IOC, mature TWN ODC, JPN F-35B operational + Tomahawk).
+
+### What Phase A does NOT do
+
+- Engine resolver still treats actions as scalar. Unit positions are tracked data but do not yet move during a run. Phase B adds the haversine movement resolver and binds movement actions to unit_ids.
+- Zone control (`TerritoryControl.contested_zones`) is still independent scalar state. Phase C will derive it from unit presence.
+- No map exporter yet. Phase D adds the Folium HTML viewer and per-turn JSON export.
+
+### Items still deferred
+
+Items #3 (resolver mutual-strike multiplier sourcing), #5 (pressure-coefficient sensitivity), #6 (cascade magnitude calibration), #7 (perception noise per-field), and #8 (validator red-line enforcement) from the initial audit remain deferred. They are independent of the spatial layer and should be addressed in their own structural-accuracy pass.

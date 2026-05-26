@@ -51,15 +51,24 @@ def _default_seed() -> int:
     return _env_int("OSE_SCENARIO_SEED", 0)
 
 
-def load_scenario(name: str, seed: int = 0):
-    """Dynamically import and instantiate a scenario class."""
+def load_scenario(name: str, seed: int = 0, year_horizon: str = "2026"):
+    """Dynamically import and instantiate a scenario class.
+
+    ``year_horizon`` is forwarded to scenario constructors that accept it;
+    silently ignored by scenarios that don't.
+    """
     if name not in SCENARIO_REGISTRY:
         print(f"Unknown scenario '{name}'. Available: {list(SCENARIO_REGISTRY.keys())}")
         sys.exit(1)
     module_path, class_name = SCENARIO_REGISTRY[name].rsplit(".", 1)
     import importlib
+    import inspect
     module = importlib.import_module(module_path)
-    return getattr(module, class_name)(seed=seed)
+    cls = getattr(module, class_name)
+    kwargs = {"seed": seed}
+    if "year_horizon" in inspect.signature(cls.__init__).parameters:
+        kwargs["year_horizon"] = year_horizon
+    return cls(**kwargs)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -122,6 +131,13 @@ Doctrine conditions:
         help="Actor short_name to be controlled by human CLI prompts instead of LLM. "
              "Other actors keep their LLM doctrine. Example: --human USA",
     )
+    parser.add_argument(
+        "--year-horizon", default="2026", choices=["2026", "2030"],
+        dest="year_horizon",
+        help="Force structure horizon for the Taiwan Strait scenario. "
+             "2026 = current baseline (IISS MB 2024-25 / DoD CMPR 2024). "
+             "2030 = projected (Fujian + Type 076 + mature TWN ODC + JPN counter-strike).",
+    )
     return parser
 
 
@@ -137,7 +153,7 @@ def main(argv: list[str] | None = None):
     run_id = args.run_id or f"{args.scenario}_{args.doctrine}_{provider_slug}_{model_slug}_{str(uuid.uuid4())[:6]}"
 
     # Load scenario
-    scenario = load_scenario(args.scenario, seed=args.seed)
+    scenario = load_scenario(args.scenario, seed=args.seed, year_horizon=args.year_horizon)
     state = scenario.initialize()
 
     # Validate human-player target if requested

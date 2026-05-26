@@ -9,21 +9,26 @@ constrained by the state and by deterministic eligibility rules.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Literal, Optional, Dict, Any
 
 from engine.event_generation import CapabilityGate, EventTemplate, PressureGate
 from engine.scenario_template import OpenEndedScenarioTemplate
 from world.state import (
     WorldState, Actor, MilitaryResources, EconomicResources,
     PoliticalResources, TerritoryControl, BilateralRelationship,
-    SystemicIndicators, RedLine,
+    SystemicIndicators, RedLine, Unit, NamedLocation,
 )
 from scenarios.base import ScenarioDefinition
+from scenarios.data.named_locations import NAMED_LOCATIONS
+from scenarios.data.units_2026 import UNITS_2026
+from scenarios.data.units_2030 import UNITS_2030
 
 
 _ALL_ACTORS = ["USA", "PRC", "TWN", "JPN"]
 
 _DOCTRINE_DIR = Path(__file__).parent / "data"
+
+YearHorizon = Literal["2026", "2030"]
 
 
 def _load_doctrine(actor_short_name: str) -> str:
@@ -34,6 +39,23 @@ def _load_doctrine(actor_short_name: str) -> str:
         return ""
     return path.read_text()
 
+
+def _build_named_locations() -> Dict[str, NamedLocation]:
+    """Instantiate NamedLocation Pydantic models from the data module."""
+    return {
+        name: NamedLocation(name=name, **data)
+        for name, data in NAMED_LOCATIONS.items()
+    }
+
+
+def _build_units(year_horizon: YearHorizon) -> Dict[str, Unit]:
+    """Instantiate Unit Pydantic models from the year-appropriate roster."""
+    roster = UNITS_2030 if year_horizon == "2030" else UNITS_2026
+    return {
+        unit_id: Unit(unit_id=unit_id, **data)
+        for unit_id, data in roster.items()
+    }
+
 def _pg(pressure: str, min_value: float, max_value: float = 1.0, weight: float = 1.0) -> PressureGate:
     return PressureGate(pressure=pressure, min_value=min_value, max_value=max_value, weight=weight)
 
@@ -43,6 +65,31 @@ def _cg(actor: str, capability: str, min_value: float, weight: float = 1.0) -> C
 
 
 class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
+    """Taiwan Strait crisis scenario.
+
+    The ``year_horizon`` parameter selects between two force-structure baselines:
+
+      - ``"2026"``: current-force baseline using widely-public IISS Military Balance
+        2024-25 / DoD CMPR 2024 numbers. The default.
+      - ``"2030"``: projected-force baseline applying programmed PRC, TWN, USA,
+        and JPN modernization deltas. Includes platforms like the PLA Type 003
+        Fujian, Type 076 LHA, additional Type 075 LHDs, US Ford-class CVN in the
+        Pacific rotation, B-21 IOC, mature TWN ODC with extended-range HF-3, and
+        JPN operational F-35B + Tomahawk counter-strike units.
+
+    Capability values for ``PRC.amphibious_capacity``, ``PRC.nuclear_capability``,
+    and ``TWN.a2ad_effectiveness`` shift between horizons; the 2026 values are
+    recalibrated downward from the original scenario (which silently mixed 2026
+    and 2030 projections). See ``scenarios/data/sources.md`` for the audit.
+    """
+
+    def __init__(self, seed: int | None = None, year_horizon: YearHorizon = "2026"):
+        super().__init__(seed=seed)
+        if year_horizon not in ("2026", "2030"):
+            raise ValueError(
+                f"year_horizon must be '2026' or '2030', got {year_horizon!r}"
+            )
+        self.year_horizon = year_horizon
 
     def build_initial_state(self) -> WorldState:
         actors = {
@@ -58,15 +105,18 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
             energy_market_volatility=0.18,
             alliance_system_cohesion=0.78,
         )
+        scenario_label = f"Taiwan Strait Crisis ({self.year_horizon})"
         return WorldState(
-            scenario_id="taiwan_strait_2026",
-            scenario_name="Taiwan Strait Crisis 2026",
+            scenario_id=f"taiwan_strait_{self.year_horizon}",
+            scenario_name=scenario_label,
             actors=actors,
             relationships=relationships,
             systemic=systemic,
             global_tension=0.55,
             crisis_phase="tension",
             max_turns=15,
+            units=_build_units(self.year_horizon),
+            named_locations=_build_named_locations(),
         )
 
     def initialize(self) -> WorldState:
@@ -891,14 +941,20 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                 conventional_forces=0.82,
                 naval_power=0.76,
                 air_superiority=0.72,
-                nuclear_capability=0.80,
+                # Nuclear: 2026 baseline reflects ~500 warheads per DoD CMPR 2024
+                # vs USA ~1700 deployed — relative capability ~0.58. 2030 projection
+                # ~1000 warheads per CMPR trendline narrows the gap → 0.72.
+                # Source: DoD CMPR 2024; FAS Nuclear Notebook.
+                nuclear_capability=0.58 if self.year_horizon == "2026" else 0.72,
                 logistics_capacity=0.70,
                 readiness=0.72,
-                # HIGH amphibious capacity: PRC has invested heavily in PLAN amphibious
-                # assault capability specifically for a Taiwan contingency
-                amphibious_capacity=0.78,
+                # Amphibious: 2026 reflects ~3 Type 075 LHD + ~8 Type 071 LPD —
+                # short of the 30+ amphibs analyses say are needed for an opposed
+                # Taiwan landing. 2030 adds Type 075 hulls 3+ and Type 076 LHA.
+                # Source: IISS MB 2024-25; DoD CMPR 2024.
+                amphibious_capacity=0.62 if self.year_horizon == "2026" else 0.72,
                 # HIGH A2/AD: DF-21D/DF-26 ASBMs are designed specifically to deny
-                # US carrier access to the Western Pacific
+                # US carrier access to the Western Pacific.
                 a2ad_effectiveness=0.82,
             ),
             economic=EconomicResources(
@@ -1096,9 +1152,13 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                 logistics_capacity=0.55,
                 readiness=0.62,
                 amphibious_capacity=0.12,  # Minimal offensive amphibious
-                # HIGH A2/AD relative to size: "porcupine strategy" — Harpoon missiles,
-                # sea mines, mobile artillery designed to make invasion costly
-                a2ad_effectiveness=0.68,
+                # A2/AD relative to size: "porcupine strategy" under ODC.
+                # 2026 reflects incomplete ODC implementation (Harpoon FMS deliveries
+                # 2024-28; reserve reform 2024+; Hai Kun SSK lead boat in sea trials).
+                # 2030 reflects mature ODC: full Harpoon battalions, extended-range HF-3,
+                # additional Hai Kun hulls, Sky Bow IV.
+                # Source: CSIS Taiwan defense series; Lee Hsi-min ODC analyses.
+                a2ad_effectiveness=0.55 if self.year_horizon == "2026" else 0.72,
             ),
             economic=EconomicResources(
                 gdp_strength=0.72,

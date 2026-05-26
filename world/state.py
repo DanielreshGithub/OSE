@@ -134,6 +134,87 @@ class Actor(BaseModel):
     current_posture: Literal["cautious", "opportunistic", "escalatory", "defensive", "signaling_restraint"] = "cautious"
 
 
+# ── Spatial Layer (Phase A) ───────────────────────────────────────────────────
+
+UnitType = Literal[
+    "csg",                  # Carrier Strike Group
+    "surface_action_group", # Multi-ship surface combatant group
+    "destroyer",            # Single major surface combatant
+    "frigate",
+    "corvette",
+    "submarine",
+    "ssbn",                 # Ballistic missile submarine
+    "amphibious_group",     # LHD/LPD task group
+    "air_wing",             # Carrier air wing
+    "fighter_squadron",
+    "bomber_squadron",
+    "isr_squadron",         # ISR / patrol aircraft
+    "missile_brigade",      # Land-based ballistic or cruise missile unit
+    "sam_battery",          # Surface-to-air missile battery
+    "coastal_defense",      # Mobile anti-ship missile / artillery battalion
+    "infantry_brigade",
+    "marine_meu",           # Marine Expeditionary Unit
+    "sof_detachment",       # Special Operations Forces
+    "cyber_unit",
+]
+
+
+UnitState = Literal[
+    "standby",        # In home port / at fixed garrison; not deployed
+    "transit",        # Underway toward a destination
+    "on_station",     # Arrived at deployment location; holding
+    "in_engagement",  # Actively engaged in combat
+    "damaged",        # Combat-degraded; reduced effectiveness
+    "destroyed",      # Out of action
+]
+
+
+class Unit(BaseModel):
+    """A platform-level military unit with a real-world position.
+
+    Phase A: Unit is tracked data only. Resolver does not yet move units
+    (that lands in Phase B). Positions update via dedicated movement actions
+    in Phase B; for now positions are static from initial roster.
+    """
+    unit_id: str
+    owner: str                                  # short_name (USA/PRC/TWN/JPN)
+    unit_type: UnitType
+    platform_class: str                         # e.g. "Nimitz (CVN-71)", "Type 055"
+    home_port: Optional[str] = None             # named_locations key
+    lat: float = Field(ge=-90.0, le=90.0)
+    lon: float = Field(ge=-180.0, le=180.0)
+    speed_kts: float = Field(default=20.0, ge=0.0, le=2000.0,
+                             description="Sustained transit speed. Subsonic for ships, "
+                                         "Mach-converted for aircraft on positioning.")
+    range_km_per_turn: float = Field(default=0.0, ge=0.0,
+                                     description="Max km per turn at sustained speed. "
+                                                 "Computed from speed_kts × turn_duration_hours × 1.852.")
+    state: UnitState = "standby"
+    destination_lat: Optional[float] = None
+    destination_lon: Optional[float] = None
+    composition: Dict[str, Any] = Field(default_factory=dict,
+                                        description="Free-form: escorts, air wing, embarked forces, weapons load")
+    source: str = ""
+    confidence: Literal["HIGH", "MEDIUM", "LOW"] = "MEDIUM"
+
+    model_config = {"extra": "forbid"}
+
+
+class NamedLocation(BaseModel):
+    """A referenceable geographic point used by actions and event templates."""
+    name: str
+    lat: float = Field(ge=-90.0, le=90.0)
+    lon: float = Field(ge=-180.0, le=180.0)
+    location_type: Literal[
+        "naval_base", "air_base", "joint_base",
+        "strait", "channel", "contested_feature",
+        "capital", "civilian_port",
+    ]
+    description: str = ""
+
+    model_config = {"extra": "forbid"}
+
+
 # ── Systemic Indicators ───────────────────────────────────────────────────────
 
 class SystemicIndicators(BaseModel):
@@ -168,6 +249,18 @@ class WorldState(BaseModel):
     relationships: List[BilateralRelationship]
     systemic: SystemicIndicators
     pressures: PressureState = Field(default_factory=empty_pressure_state)
+
+    # ── Spatial layer (Phase A: tracked but not yet acted on by resolver) ────
+    units: Dict[str, Unit] = Field(
+        default_factory=dict,
+        description="Platform-level units keyed by unit_id. Phase A: data-only; "
+                    "movement mechanics land in Phase B.",
+    )
+    named_locations: Dict[str, NamedLocation] = Field(
+        default_factory=dict,
+        description="Referenceable geographic points (bases, straits, features) "
+                    "keyed by lowercase name.",
+    )
 
     global_tension: float = Field(ge=0.0, le=1.0, description="Aggregate system tension")
     active_conflicts: List[str] = Field(default_factory=list, description="Active conflict zone IDs")
