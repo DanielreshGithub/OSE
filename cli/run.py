@@ -117,6 +117,11 @@ Doctrine conditions:
         "--quiet", action="store_true",
         help="Suppress Rich terminal display",
     )
+    parser.add_argument(
+        "--human", default=None,
+        help="Actor short_name to be controlled by human CLI prompts instead of LLM. "
+             "Other actors keep their LLM doctrine. Example: --human USA",
+    )
     return parser
 
 
@@ -135,16 +140,31 @@ def main(argv: list[str] | None = None):
     scenario = load_scenario(args.scenario, seed=args.seed)
     state = scenario.initialize()
 
-    # Build LLM actors — all share the same provider instance
+    # Validate human-player target if requested
+    if args.human is not None and args.human not in state.actors:
+        valid_ids = ", ".join(sorted(state.actors.keys()))
+        print(
+            f"--human '{args.human}' is not in this scenario. "
+            f"Valid actor IDs: {valid_ids}"
+        )
+        sys.exit(1)
+    if args.human is not None:
+        print(f"Playing as: {args.human}  (other actors run on LLM doctrine='{args.doctrine}')")
+
+    # Build actors — human-controlled actor (if any) skips the LLM provider
     from actors.llm_actor import LLMDecisionActor
+    from actors.human_actor import HumanDecisionActor
     actors = {}
     for name, actor in state.actors.items():
-        actors[name] = LLMDecisionActor(
-            actor=actor,
-            doctrine_condition=args.doctrine,
-            run_id=run_id,
-            provider=provider,
-        )
+        if args.human == name:
+            actors[name] = HumanDecisionActor(actor=actor, run_id=run_id)
+        else:
+            actors[name] = LLMDecisionActor(
+                actor=actor,
+                doctrine_condition=args.doctrine,
+                run_id=run_id,
+                provider=provider,
+            )
 
     # Run simulation — pass scenario directly so events roll against live state each turn
     from engine.loop import SimulationEngine

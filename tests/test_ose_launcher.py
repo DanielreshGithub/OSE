@@ -30,6 +30,14 @@ class OSELauncherTests(unittest.TestCase):
         self.assertEqual(command, "report")
         self.assertEqual(argv, ["--output", "reports"])
 
+    def test_human_flag_passes_through_to_run(self):
+        command, argv = normalize_invocation(
+            ["realist", "--turns", "3", "--human", "USA"]
+        )
+        self.assertEqual(command, "run")
+        self.assertIn("--human", argv)
+        self.assertEqual(argv[argv.index("--human") + 1], "USA")
+
 
 if __name__ == "__main__":
     unittest.main()

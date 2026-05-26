@@ -78,6 +78,16 @@ python3 ose realist deepseek/deepseek-r1 --turns 10 --seed 0
 
 You can pass any OpenRouter model ID directly. If the model has known tool-call limitations, OSE routes it automatically to the correct fallback strategy (see [OpenRouter Compatibility](#openrouter-compatibility)).
 
+### Human Player Mode
+
+Take control of one actor and let the LLM run the rest. Each turn you receive a fog-of-war briefing (qualitative bands, same filter the AI sees), a numbered menu of valid actions, and prompts for target, intensity, and an optional rationale. The other actors still react under the doctrine you specified with `--doctrine` / the leading positional.
+
+```bash
+python3 ose realist --turns 10 --human USA
+```
+
+Valid actor IDs in the Taiwan Strait scenario: `USA`, `PRC`, `TWN`, `JPN`. The `--doctrine` flag applies only to the **AI** actors; your moves are doctrine-free. Your turns are logged with `provider_name="human"` so reports and SQL queries can distinguish them.
+
 ### Generate Reports
 
 Basic report:
