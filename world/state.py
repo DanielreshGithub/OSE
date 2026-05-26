@@ -115,6 +115,7 @@ class Actor(BaseModel):
     institutional_constraints: str = ""  # Actual decision-making machinery and procedural limits
     cognitive_patterns: str = ""  # Documented biases, blind spots, cultural heuristics
     war_aversion: str = ""  # Why war is specifically catastrophic for THIS actor
+    military_doctrine_narrative: str = ""  # Revealed operational doctrine — how this actor actually fights, anchored in observed historical campaigns
 
     # Perception and intel
     information_quality: float = Field(

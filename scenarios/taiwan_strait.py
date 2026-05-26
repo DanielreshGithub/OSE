@@ -8,6 +8,7 @@ constrained by the state and by deterministic eligibility rules.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 from engine.event_generation import CapabilityGate, EventTemplate, PressureGate
@@ -21,6 +22,17 @@ from scenarios.base import ScenarioDefinition
 
 
 _ALL_ACTORS = ["USA", "PRC", "TWN", "JPN"]
+
+_DOCTRINE_DIR = Path(__file__).parent / "data"
+
+
+def _load_doctrine(actor_short_name: str) -> str:
+    """Load revealed-military-doctrine narrative for an actor from
+    scenarios/data/doctrine_<SHORT_NAME>.md. Returns empty string if absent."""
+    path = _DOCTRINE_DIR / f"doctrine_{actor_short_name}.md"
+    if not path.exists():
+        return ""
+    return path.read_text()
 
 def _pg(pressure: str, min_value: float, max_value: float = 1.0, weight: float = 1.0) -> PressureGate:
     return PressureGate(pressure=pressure, min_value=min_value, max_value=max_value, weight=weight)
@@ -865,6 +877,7 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                 "unilaterally. They prefer at minimum Japanese support before committing to "
                 "military operations in the Western Pacific. If Japan hesitates, the US may delay."
             ),
+            military_doctrine_narrative=_load_doctrine("USA"),
             information_quality=0.82,
             perceived_threats={"PRC": 0.62, "TWN": 0.05, "JPN": 0.02},
         )
@@ -1065,6 +1078,7 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                 "informed by the PRC's own experience of unreliable allies (Soviet split). "
                 "This bias may lead PRC to test alliance resolve more aggressively than warranted."
             ),
+            military_doctrine_narrative=_load_doctrine("PRC"),
             information_quality=0.75,
             perceived_threats={"USA": 0.72, "TWN": 0.20, "JPN": 0.52},
         )
@@ -1252,6 +1266,7 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                 "firing first — even in self-defense — risks losing the moral high ground and "
                 "the international sympathy that is Taiwan's most important non-military asset."
             ),
+            military_doctrine_narrative=_load_doctrine("TWN"),
             information_quality=0.70,
             perceived_threats={"PRC": 0.92, "USA": 0.02, "JPN": 0.03},
         )
@@ -1452,6 +1467,7 @@ class TaiwanStraitScenario(ScenarioDefinition, OpenEndedScenarioTemplate):
                 "leaders who get ahead of public opinion. In a fast-moving crisis, this "
                 "incrementalism can look like paralysis — but it also prevents rash escalation."
             ),
+            military_doctrine_narrative=_load_doctrine("JPN"),
             information_quality=0.76,
             perceived_threats={"PRC": 0.62, "TWN": 0.02, "USA": 0.02},
         )

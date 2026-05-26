@@ -162,16 +162,19 @@ def build_persona_prompt(
         historical_precedents = "Refer to your known historical behavioral patterns."
         institutional_constraints = "You operate within your state's institutional decision-making process."
         cognitive_patterns = "You carry the typical biases and heuristics of your state's strategic culture."
+        military_doctrine = "Fight in a manner consistent with your known operational doctrine."
     elif prompt_mode == "compact":
         war_aversion = _trim(actor.war_aversion or "", 250) or "War carries severe domestic and material costs."
         historical_precedents = "Refer to your known historical behavioral patterns."
         institutional_constraints = _trim(actor.institutional_constraints or "", 250) or "Standard institutional process applies."
         cognitive_patterns = _trim(actor.cognitive_patterns or "", 200) or "Standard cognitive biases apply."
+        military_doctrine = _trim(actor.military_doctrine_narrative or "", 400) or "Fight in a manner consistent with your known operational doctrine."
     else:  # full
         war_aversion = actor.war_aversion or "No specific war aversion factors specified."
         historical_precedents = actor.historical_precedents or "No historical precedents specified."
         institutional_constraints = actor.institutional_constraints or "No institutional constraints specified."
         cognitive_patterns = actor.cognitive_patterns or "No cognitive patterns specified."
+        military_doctrine = actor.military_doctrine_narrative or "No revealed military doctrine specified."
 
     return template.format(
         actor_name=actor.name,
@@ -186,5 +189,6 @@ def build_persona_prompt(
         historical_precedents=historical_precedents,
         institutional_constraints=institutional_constraints,
         cognitive_patterns=cognitive_patterns,
+        military_doctrine=military_doctrine,
         doctrine_instructions=doctrine_text,
     )
