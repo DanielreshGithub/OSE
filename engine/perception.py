@@ -226,5 +226,85 @@ def build_perception_packet(actor: Actor, state: WorldState) -> Tuple[Dict[str, 
             "deterrence_credibility": _to_band(rel.deterrence_credibility),
         })
 
+    # ── Spatial-layer fog-of-war (Phase B) ───────────────────────────────────
+    if state.units:
+        unit_positions: Dict[str, Any] = {}
+        unit_meta: Dict[str, Any] = {}
+        allies = set(state.get_allies(actor.short_name))
+        for unit_id, unit in state.units.items():
+            relation_noise = _per_field_noise_scale(actor, unit.owner, state, contradictory_count)
+            # Submarines hide much better than surface units.
+            submersible = unit.unit_type in ("submarine", "ssbn")
+            type_multiplier = 4.0 if submersible else 1.0
+            # Convert resource-noise scale (~0.0-0.25) into degrees lat/lon.
+            # 1.0 unit-of-relation-noise ≈ 1.0° ≈ ~110 km. Capped to 2°.
+            pos_noise_deg = min(2.0, relation_noise * type_multiplier)
+
+            if unit.owner == actor.short_name:
+                # Own units: exact position, full info.
+                lat = unit.lat
+                lon = unit.lon
+                detected = True
+                state_visible = unit.state
+            elif unit.owner in allies:
+                # Allied units: very small noise (intel-sharing). Cap at 0.1°.
+                pos_noise_deg = min(pos_noise_deg, 0.1)
+                lat_noise = _stable_gaussian(
+                    seed, state.turn, actor.short_name, unit_id, "lat"
+                ) * pos_noise_deg
+                lon_noise = _stable_gaussian(
+                    seed, state.turn, actor.short_name, unit_id, "lon"
+                ) * pos_noise_deg
+                lat = unit.lat + lat_noise
+                lon = unit.lon + lon_noise
+                detected = True
+                state_visible = unit.state
+            else:
+                # Adversary or neutral: noise applies; submarines may go undetected.
+                if submersible and relation_noise > 0.12:
+                    # Deep-water sub at high uncertainty → not detected this turn.
+                    unit_positions[unit_id] = {
+                        "owner": unit.owner, "unit_type": unit.unit_type,
+                        "detected": False, "assessment_confidence": "LOW",
+                    }
+                    unit_meta[unit_id] = {
+                        "noise_deg": round(pos_noise_deg, 4), "detected": False,
+                    }
+                    continue
+                lat_noise = _stable_gaussian(
+                    seed, state.turn, actor.short_name, unit_id, "lat"
+                ) * pos_noise_deg
+                lon_noise = _stable_gaussian(
+                    seed, state.turn, actor.short_name, unit_id, "lon"
+                ) * pos_noise_deg
+                lat = unit.lat + lat_noise
+                lon = unit.lon + lon_noise
+                detected = True
+                # Adversaries see posture/state coarsely. Treat transit/standby
+                # as known; in_engagement / damaged is harder to confirm.
+                state_visible = (
+                    "transit" if unit.state == "transit"
+                    else "on_station" if unit.state == "on_station"
+                    else "unknown"
+                )
+
+            unit_positions[unit_id] = {
+                "owner": unit.owner,
+                "unit_type": unit.unit_type,
+                "lat": round(lat, 3),
+                "lon": round(lon, 3),
+                "state": state_visible,
+                "detected": detected,
+                "assessment_confidence": _to_confidence(pos_noise_deg / 5.0),
+            }
+            unit_meta[unit_id] = {
+                "noise_deg": round(pos_noise_deg, 4),
+                "detected": detected,
+                "true_lat": unit.lat,
+                "true_lon": unit.lon,
+            }
+        packet["unit_positions"] = unit_positions
+        metadata["unit_positions"] = unit_meta
+
     metadata["packet_size_bytes"] = len(json.dumps(packet))
     return packet, metadata

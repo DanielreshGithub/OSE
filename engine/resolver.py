@@ -22,6 +22,7 @@ from typing import Dict, List, Tuple, Any
 from world.state import WorldState, Actor
 from world.events import GlobalEvent
 from engine.costs import compute_action_cost_breakdown
+from engine.movement import move_unit_toward
 from engine.actions import (
     BaseAction,
     MobilizeAction, StrikeAction, AdvanceAction, WithdrawAction,
@@ -35,6 +36,60 @@ from engine.actions import (
     NuclearSignalAction,
     HoldPositionAction, MonitorAction,
 )
+
+
+def _resolve_destination(action: BaseAction, state: WorldState):
+    """Return (lat, lon) or None if the action has no spatial destination."""
+    if action.target_location is not None:
+        return action.target_location
+    if action.target_location_ref is not None:
+        loc = state.named_locations.get(action.target_location_ref)
+        if loc is not None:
+            return (loc.lat, loc.lon)
+    return None
+
+
+def _apply_unit_movement(
+    action: BaseAction,
+    state: WorldState,
+    events: List[GlobalEvent],
+) -> bool:
+    """Move any unit_ids referenced by the action toward the action's destination.
+
+    Returns True if any units moved. Appends one GlobalEvent per unit
+    describing the movement.
+    """
+    if not action.unit_ids:
+        return False
+    destination = _resolve_destination(action, state)
+    if destination is None:
+        return False
+    dest_lat, dest_lon = destination
+
+    moved_any = False
+    for uid in action.unit_ids:
+        unit = state.units.get(uid)
+        if unit is None or unit.owner != action.actor_id:
+            continue
+        prev_lat, prev_lon = unit.lat, unit.lon
+        prev_state = unit.state
+        move_unit_toward(unit, dest_lat, dest_lon)
+        moved_any = True
+        # Only emit a movement event if position actually changed
+        if (unit.lat, unit.lon) != (prev_lat, prev_lon) or unit.state != prev_state:
+            dest_label = action.target_location_ref or f"({dest_lat:.2f}, {dest_lon:.2f})"
+            events.append(GlobalEvent(
+                turn=state.turn,
+                category="military",
+                description=(
+                    f"{action.actor_id} {action.action_type}: unit {uid} "
+                    f"{prev_state}→{unit.state} toward {dest_label} "
+                    f"(now at {unit.lat:.2f}, {unit.lon:.2f})."
+                ),
+                source="actor", caused_by_actor=action.actor_id,
+                affected_actors=[action.actor_id],
+            ))
+    return moved_any
 
 INTENSITY_SCALE = {"low": 0.5, "medium": 1.0, "high": 1.5}
 
@@ -100,6 +155,12 @@ class TurnResolver:
             actor = state.get_actor(actor_id)
             if actor is None:
                 continue
+
+            # ── Spatial movement (Phase B) ───────────────────────────────────
+            # If the action carries unit_ids + a destination, advance those
+            # units toward it before applying the scalar effects. Movement is
+            # additive; scalar resolution still runs.
+            _apply_unit_movement(action, state, events)
 
             # ── Military ─────────────────────────────────────────────────────
 

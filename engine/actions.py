@@ -47,6 +47,17 @@ class BaseAction(BaseModel, ABC):
     communication_mode: Optional[str] = None
     rationale: str = ""                  # LLM-provided justification (for logging)
 
+    # ── Phase B: optional spatial binding ─────────────────────────────────
+    # When set, the resolver moves these units toward target_location[_ref].
+    # When unset, the action falls back to the existing scalar zone-control
+    # mutation pattern.
+    unit_ids: List[str] = Field(default_factory=list,
+                                description="Specific units to move with this action; empty = legacy scalar resolution.")
+    target_location: Optional[Tuple[float, float]] = Field(default=None,
+                                                           description="Explicit destination (lat, lon).")
+    target_location_ref: Optional[str] = Field(default=None,
+                                               description="Named location reference (key in WorldState.named_locations).")
+
     military_cost: float = 0.0
     economic_cost: float = 0.0
     political_cost: float = 0.0
@@ -76,6 +87,84 @@ def _capability_errors(action: BaseAction, state: "WorldState") -> List[str]:
 
     result = evaluate_action_constraints(action.action_type, actor.capabilities, state.pressures)
     errors = list(result.reasons)
+    return errors
+
+
+def _spatial_errors(action: BaseAction, state: "WorldState") -> List[str]:
+    """Validate the optional spatial binding fields on a BaseAction.
+
+    If unit_ids is empty, returns no errors (legacy scalar resolution path).
+    Otherwise checks:
+      - all unit_ids exist in state.units
+      - all units are owned by the acting actor (cannot order another state's
+        units around)
+      - if unit_ids set, exactly one destination is set (target_location XOR
+        target_location_ref)
+      - named location reference resolves
+      - immobile units (range_km_per_turn=0) are already at the destination
+    """
+    if not action.unit_ids:
+        return []
+
+    errors: List[str] = []
+
+    # Owner + existence check
+    missing: List[str] = []
+    not_owned: List[str] = []
+    for uid in action.unit_ids:
+        unit = state.units.get(uid)
+        if unit is None:
+            missing.append(uid)
+        elif unit.owner != action.actor_id:
+            not_owned.append(uid)
+    if missing:
+        errors.append(f"Unknown unit_id(s): {missing}")
+    if not_owned:
+        errors.append(
+            f"unit_id(s) {not_owned} not owned by {action.actor_id}; "
+            f"actors cannot move other actors' units."
+        )
+
+    # Destination resolution
+    has_coord = action.target_location is not None
+    has_ref = action.target_location_ref is not None
+    if not (has_coord or has_ref):
+        errors.append(
+            "unit_ids supplied but neither target_location nor "
+            "target_location_ref provided; cannot resolve destination."
+        )
+    elif has_coord and has_ref:
+        errors.append(
+            "target_location and target_location_ref both supplied; "
+            "specify exactly one."
+        )
+
+    if has_ref and action.target_location_ref not in state.named_locations:
+        errors.append(
+            f"target_location_ref '{action.target_location_ref}' "
+            f"not in named_locations."
+        )
+
+    # Range sanity: immobile units stuck unless already at destination
+    if not errors and (has_coord or has_ref):
+        from engine.movement import compute_distance_km, ARRIVAL_THRESHOLD_KM
+        if has_ref:
+            loc = state.named_locations[action.target_location_ref]
+            dest_lat, dest_lon = loc.lat, loc.lon
+        else:
+            dest_lat, dest_lon = action.target_location
+        for uid in action.unit_ids:
+            unit = state.units.get(uid)
+            if unit is None:
+                continue
+            if unit.range_km_per_turn <= 0:
+                d = compute_distance_km(unit.lat, unit.lon, dest_lat, dest_lon)
+                if d > ARRIVAL_THRESHOLD_KM:
+                    errors.append(
+                        f"Unit {uid} is immobile (range=0) and not at destination "
+                        f"(currently {d:.0f} km away)."
+                    )
+
     return errors
 
 
@@ -144,12 +233,14 @@ class AdvanceAction(BaseAction):
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
         errors = _capability_errors(self, state)
+        errors.extend(_spatial_errors(self, state))
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
             return False, errors
-        if self.target_zone is None:
-            errors.append("Advance requires target_zone.")
+        # Either target_zone (legacy scalar path) or unit_ids+destination (spatial path)
+        if self.target_zone is None and not self.unit_ids:
+            errors.append("Advance requires target_zone (legacy) or unit_ids + destination (spatial).")
         if actor.military.logistics_capacity < 0.3:
             errors.append("Logistics capacity too low (< 0.3) to sustain advance.")
         if actor.military.readiness < 0.4:
@@ -170,6 +261,7 @@ class WithdrawAction(BaseAction):
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
         errors = _capability_errors(self, state)
+        errors.extend(_spatial_errors(self, state))
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
@@ -190,14 +282,15 @@ class BlockadeAction(BaseAction):
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
         errors = _capability_errors(self, state)
+        errors.extend(_spatial_errors(self, state))
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
             return False, errors
         if actor.military.naval_power < 0.3:
             errors.append("Naval power too low (< 0.3) to enforce blockade.")
-        if self.target_actor is None and self.target_zone is None:
-            errors.append("Blockade requires target_actor or target_zone.")
+        if self.target_actor is None and self.target_zone is None and not self.unit_ids:
+            errors.append("Blockade requires target_actor, target_zone, or unit_ids + destination.")
         return len(errors) == 0, errors
 
     def get_expected_effects(self) -> Dict[str, str]:
@@ -233,12 +326,13 @@ class ProbeAction(BaseAction):
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
         errors = _capability_errors(self, state)
+        errors.extend(_spatial_errors(self, state))
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
             return False, errors
-        if self.target_actor is None and self.target_zone is None:
-            errors.append("Probe requires target_actor or target_zone.")
+        if self.target_actor is None and self.target_zone is None and not self.unit_ids:
+            errors.append("Probe requires target_actor, target_zone, or unit_ids + destination.")
         if actor.military.readiness < 0.2:
             errors.append("Readiness too low (< 0.2) to execute probe.")
         return len(errors) == 0, errors
@@ -276,12 +370,13 @@ class DeployForwardAction(BaseAction):
 
     def is_valid(self, state: "WorldState") -> Tuple[bool, List[str]]:
         errors = _capability_errors(self, state)
+        errors.extend(_spatial_errors(self, state))
         actor = state.get_actor(self.actor_id)
         if actor is None:
             errors.append(f"Actor '{self.actor_id}' not found in world state.")
             return False, errors
-        if self.target_zone is None and self.locality is None:
-            errors.append("DeployForward requires target_zone or locality.")
+        if self.target_zone is None and self.locality is None and not self.unit_ids:
+            errors.append("DeployForward requires target_zone, locality, or unit_ids + destination.")
         if actor.military.logistics_capacity < 0.35:
             errors.append("Logistics capacity too low (< 0.35) to sustain forward deployment.")
         if actor.military.readiness < 0.30:
