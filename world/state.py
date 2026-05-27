@@ -329,6 +329,42 @@ class WorldState(BaseModel):
         if not self.pressures.scenario_id:
             self.pressures.scenario_id = self.scenario_id
         self.pressures.turn = self.turn
+        self.derive_contested_zones()
         return self.clamp_all_resources()
+
+    def derive_contested_zones(self) -> "WorldState":
+        """Compute zone control from current unit presence.
+
+        For each zone with a bounding box in ``scenarios.data.zone_bboxes``,
+        sum unit counts by owner within the bbox and assign each actor a
+        share = (own_units / total_units). If no units are inside a zone's
+        bbox, the existing scalar contested_zones value is preserved
+        (legacy behavior for actions that never touched the spatial layer).
+
+        Phase C v1: all units count equally (weight 1.0). A future refinement
+        can weight by ``unit_type`` (CSG > destroyer > frigate > corvette etc.).
+        """
+        if not self.units:
+            return self
+        try:
+            from scenarios.data.zone_bboxes import ZONE_BBOXES, zone_contains
+        except ImportError:
+            return self
+
+        for zone_id, bbox in ZONE_BBOXES.items():
+            owner_counts: Dict[str, float] = {}
+            for unit in self.units.values():
+                if unit.state == "destroyed":
+                    continue
+                if zone_contains(zone_id, unit.lat, unit.lon):
+                    owner_counts[unit.owner] = owner_counts.get(unit.owner, 0.0) + 1.0
+            total = sum(owner_counts.values())
+            if total <= 0:
+                # No units in zone; leave existing contested_zones values alone.
+                continue
+            for actor_name, actor in self.actors.items():
+                share = owner_counts.get(actor_name, 0.0) / total
+                actor.territory.contested_zones[zone_id] = round(share, 4)
+        return self
 
     model_config = {"arbitrary_types_allowed": True}

@@ -32,6 +32,11 @@ from actors.base import ActorInterface
 
 _INTENSITIES = ["low", "medium", "high"]
 
+# Actions that can carry spatial bindings (unit_ids + destination). For these,
+# the human briefing offers a unit-selection + named-location prompt. Skipping
+# both falls back to the legacy scalar target_actor / target_zone prompt.
+_MOVEMENT_ACTIONS = {"advance", "withdraw", "blockade", "probe", "deploy_forward"}
+
 
 def _short_doc(action_type: str) -> str:
     """One-line description of an action class. Pulled from the class docstring
@@ -185,6 +190,17 @@ class HumanDecisionActor(ActorInterface):
             for e in recent_events[:10]:
                 self._print(f"  - {e}")
 
+        # Phase C: show friendly units with positions when the spatial layer is loaded.
+        friendly = [u for u in state.units.values() if u.owner == self.actor.short_name]
+        if friendly:
+            self._print("")
+            self._print(f"YOUR UNITS  ({len(friendly)})")
+            for u in friendly:
+                self._print(
+                    f"  {u.unit_id:<26} {u.unit_type:<22} @ ({u.lat:6.2f}, {u.lon:7.2f}) "
+                    f"[{u.state}]  range={int(u.range_km_per_turn)}km/turn"
+                )
+
         self._print("")
         self._print(f"AVAILABLE ACTIONS  ({len(available)})")
         for i, a in enumerate(available, 1):
@@ -199,10 +215,25 @@ class HumanDecisionActor(ActorInterface):
         available: List[str],
     ) -> Tuple[BaseAction, str, int]:
         other_actors = [n for n in state.actors.keys() if n != self.actor.short_name]
+        friendly_units = [u for u in state.units.values() if u.owner == self.actor.short_name]
         attempts = 0
         while True:
             action_type = self._prompt_action(available)
-            target_actor = self._prompt_target_actor(action_type, other_actors)
+
+            # Phase C: spatial path for movement actions. Empty selection falls
+            # through to the legacy target_actor prompt.
+            unit_ids: List[str] = []
+            target_location_ref: Optional[str] = None
+            target_actor: Optional[str] = None
+            if action_type in _MOVEMENT_ACTIONS and friendly_units:
+                unit_ids = self._prompt_units(friendly_units)
+                if unit_ids:
+                    target_location_ref = self._prompt_named_location(state)
+
+            if not unit_ids:
+                # Legacy scalar path (or actions that aren't movement).
+                target_actor = self._prompt_target_actor(action_type, other_actors)
+
             intensity = self._prompt_intensity()
             rationale = self._prompt_rationale()
 
@@ -214,6 +245,10 @@ class HumanDecisionActor(ActorInterface):
             }
             if target_actor:
                 payload["target_actor"] = target_actor
+            if unit_ids:
+                payload["unit_ids"] = unit_ids
+            if target_location_ref:
+                payload["target_location_ref"] = target_location_ref
 
             try:
                 candidate = parse_action_from_dict(payload)
@@ -250,6 +285,61 @@ class HumanDecisionActor(ActorInterface):
                 self._print(f"  '{raw}' is in the registry but not valid for you this turn.")
                 continue
             self._print(f"  Unknown action '{raw}'. Pick from the menu above.")
+
+    def _prompt_units(self, friendly_units: List[Any]) -> List[str]:
+        """Prompt for unit selection. Accepts comma-separated indices, names,
+        or empty to skip the spatial path entirely."""
+        if not friendly_units:
+            return []
+        self._print("")
+        self._print("Movement option: select units to move (or press enter to skip → legacy path).")
+        for i, u in enumerate(friendly_units, 1):
+            self._print(f"  [{i:>2}] {u.unit_id:<26} {u.unit_type:<22} @ ({u.lat:6.2f}, {u.lon:7.2f})")
+        raw = self._input("> Units (comma-separated #s or IDs, blank=skip): ").strip()
+        if not raw:
+            return []
+        tokens = [t.strip() for t in raw.split(",") if t.strip()]
+        selected: List[str] = []
+        for token in tokens:
+            if token.isdigit():
+                idx = int(token)
+                if 1 <= idx <= len(friendly_units):
+                    selected.append(friendly_units[idx - 1].unit_id)
+                else:
+                    self._print(f"  Skipping out-of-range index '{token}'.")
+            else:
+                if any(u.unit_id == token for u in friendly_units):
+                    selected.append(token)
+                else:
+                    self._print(f"  Skipping unknown unit_id '{token}'.")
+        return selected
+
+    def _prompt_named_location(self, state: WorldState) -> Optional[str]:
+        """Prompt for a destination by named-location key. Returns the key or
+        None if the user provides empty input (caller should reject)."""
+        locations = sorted(state.named_locations.keys())
+        if not locations:
+            self._print("  No named locations defined; cannot continue spatial path.")
+            return None
+        self._print("")
+        self._print(f"Pick destination (named location). {len(locations)} options:")
+        for i, name in enumerate(locations, 1):
+            loc = state.named_locations[name]
+            self._print(f"  [{i:>2}] {name:<28} ({loc.lat:6.2f}, {loc.lon:7.2f}) {loc.location_type}")
+        while True:
+            raw = self._input("> Destination # or name: ").strip()
+            if not raw:
+                self._print("  Empty input — spatial path requires a destination.")
+                continue
+            if raw.isdigit():
+                idx = int(raw)
+                if 1 <= idx <= len(locations):
+                    return locations[idx - 1]
+                self._print(f"  Out of range (1..{len(locations)}).")
+                continue
+            if raw in locations:
+                return raw
+            self._print(f"  Unknown named location '{raw}'.")
 
     def _prompt_target_actor(self, action_type: str, other_actors: List[str]) -> Optional[str]:
         if action_type in ("hold_position", "monitor"):

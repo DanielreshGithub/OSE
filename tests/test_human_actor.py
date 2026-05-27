@@ -127,6 +127,66 @@ class HumanDecisionActorTests(unittest.TestCase):
         # accept any non-self actor as the target.
         self.assertIn(action.target_actor, {n for n in self.state.actors if n != "USA"})
 
+    def test_deploy_forward_spatial_path_picks_unit_and_location(self):
+        # Phase C: select first USA unit by index, then bashi_channel by name.
+        # deploy_forward is a movement action so the spatial-path prompts fire
+        # before the target_actor prompt is reached.
+        # Determine the first USA unit's index in the friendly list.
+        friendly = [u for u in self.state.units.values() if u.owner == "USA"]
+        # Find a friendly unit with non-zero range so the spatial path accepts it.
+        movable_idx = next(
+            i for i, u in enumerate(friendly, 1) if u.range_km_per_turn > 0
+        )
+        # Locations are sorted; find bashi_channel's index.
+        loc_names = sorted(self.state.named_locations.keys())
+        bashi_idx = str(loc_names.index("bashi_channel") + 1)
+        actor = HumanDecisionActor(
+            actor=self.actor_obj,
+            run_id="test-run",
+            input_fn=scripted_input([
+                "deploy_forward",
+                str(movable_idx),  # unit selection
+                bashi_idx,          # destination
+                "",                 # intensity → medium
+                "surge",            # rationale
+            ]),
+            print_fn=silent_print,
+        )
+        action, record = actor.decide(self.state)
+        self.assertEqual(action.action_type, "deploy_forward")
+        self.assertEqual(len(action.unit_ids), 1)
+        self.assertEqual(action.target_location_ref, "bashi_channel")
+        self.assertIsNone(action.target_actor)  # spatial path bypasses target_actor prompt
+        self.assertEqual(record.reasoning_trace, "surge")
+
+    def test_movement_action_skip_units_falls_back_to_legacy(self):
+        # Skipping the unit selection with "" should fall through to the
+        # legacy target_actor prompt path.
+        # Pick a movement action that doesn't need a target_actor: deploy_forward
+        # accepts target_zone via legacy. We'll route through target_actor anyway
+        # since the prompt offers it. Pass blank target_actor → action validates
+        # against legacy "requires target_zone, locality, or unit_ids" rule.
+        # To make it valid, use 'blockade' with a target_actor (legacy path).
+        # First other actor in dict-iteration is PRC (insertion order USA→PRC→TWN→JPN).
+        other_idx = "1"
+        actor = HumanDecisionActor(
+            actor=self.actor_obj,
+            run_id="test-run",
+            input_fn=scripted_input([
+                "blockade",  # action
+                "",          # unit selection skipped
+                other_idx,   # target_actor (legacy prompt)
+                "",          # intensity
+                "",          # rationale
+            ]),
+            print_fn=silent_print,
+        )
+        action, _ = actor.decide(self.state)
+        self.assertEqual(action.action_type, "blockade")
+        self.assertEqual(action.unit_ids, [])
+        self.assertIsNone(action.target_location_ref)
+        self.assertIsNotNone(action.target_actor)
+
 
 if __name__ == "__main__":
     unittest.main()

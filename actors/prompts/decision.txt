@@ -37,6 +37,12 @@ You may select ONE action from the following valid options:
 
 {available_actions}
 
+### Your Units (Platform-Level Force Disposition)
+
+{unit_roster}
+
+For movement-implicit actions (advance, deploy_forward, blockade, withdraw, probe) you may specify `unit_ids` + `target_location_ref` in your tool call to direct specific platforms to a specific destination. The engine will range-gate the movement and resolve transit across turns automatically. Omit these fields to use the legacy abstract path (the action still resolves, but no specific units are tracked).
+
 ---
 
 ## Structured Decision Rationale

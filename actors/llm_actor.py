@@ -149,6 +149,30 @@ def _format_available_actions(actor_id: str, state: WorldState) -> str:
     return "\n".join(f"- `{a}`" for a in sorted(available))
 
 
+def _format_unit_roster(actor_id: str, state: WorldState) -> str:
+    """Compact summary of this actor's units + key adversary positions visible
+    through the perception layer. Injected into the decision prompt so the
+    LLM can reference unit_ids and target_location_refs in its tool call."""
+    own = [u for u in state.units.values() if u.owner == actor_id]
+    if not own:
+        return "No units tracked for your actor in this scenario."
+    lines = [f"**Your units ({len(own)})** — reference by unit_id when moving:"]
+    for u in own:
+        lines.append(
+            f"- `{u.unit_id}` ({u.unit_type}, {u.platform_class}) "
+            f"@ ({u.lat:.2f}, {u.lon:.2f}) [{u.state}] "
+            f"range={int(u.range_km_per_turn)}km/turn"
+        )
+    if state.named_locations:
+        names = sorted(state.named_locations.keys())
+        lines.append("")
+        lines.append(
+            f"**Named destinations** for `target_location_ref` ({len(names)} available): "
+            + ", ".join(f"`{n}`" for n in names)
+        )
+    return "\n".join(lines)
+
+
 def build_decision_prompt(
     actor: Actor,
     state: WorldState,
@@ -169,6 +193,7 @@ def build_decision_prompt(
     relationships_block = _format_relationships(perception)
     pressure_summary = _format_pressure_summary(state)
     capability_summary = _format_capability_summary(actor)
+    unit_roster_block = _format_unit_roster(actor.short_name, state)
     uncertainty_block = perception.get("uncertainty", {})
     contradictory_signals = "\n".join(
         f"- {item}" for item in uncertainty_block.get("contradictory_signals", [])
@@ -190,6 +215,7 @@ def build_decision_prompt(
         capability_summary=capability_summary,
         uncertainty_level=uncertainty_block.get("level", "MEDIUM"),
         contradictory_signals=contradictory_signals,
+        unit_roster=unit_roster_block,
     )
 
     if retry_feedback:
@@ -241,6 +267,24 @@ ACTION_TOOL_SCHEMA = {
             "communication_mode": {
                 "type": "string",
                 "description": "Optional signaling or communication mode (e.g., public_statement, private_channel).",
+            },
+            "unit_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional list of YOUR unit IDs to commit to this action. When provided "
+                    "with target_location_ref, the engine moves those units toward the named "
+                    "destination (range-gated, multi-turn transit if needed). Use for movement "
+                    "actions (advance, deploy_forward, blockade, withdraw, probe). Omit to use "
+                    "the legacy abstract path."
+                ),
+            },
+            "target_location_ref": {
+                "type": "string",
+                "description": (
+                    "Named geographic destination for unit movement (e.g., 'bashi_channel', "
+                    "'taiwan_strait_centerline', 'miyako_strait'). Pairs with unit_ids."
+                ),
             },
             "rationale": {
                 "type": "string",
